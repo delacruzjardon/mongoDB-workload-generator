@@ -40,7 +40,40 @@ pip3 install faker joblib pymongo
 
 ## Functionality
 
-By default, the workload runs for `60 seconds`, creating `4 threads` and using 1 CPU core. The workload creates a database called `airlines` with a collection named `flights_1` and data — no manual setup is required on the backend. (Note: Sharding is not enabled by default.)
+By default, the workload runs for `60 seconds`, creating `4 threads` and using 1 CPU core. The workload creates a database called `airlines` with a collection named `flights_1` and populates it with documents containing data similar to the sample shown below. (Note: Sharding is not enabled by default.)
+
+```
+[direct: mongos] airlines> db.flights_1.findOne()
+{
+  _id: ObjectId('6806aafca42639c2279450a4'),
+  flight_id: 6766976,
+  flight_name: 'Flight_kopgt',
+  departure: 'Crawfordside',
+  arrival: 'Lake Tony',
+  gate: 'K10',
+  timestamp: ISODate('2025-04-21T16:30:52.512Z'),
+  duration_minutes: 523,
+  seats_available: 80,
+  passengers: [
+    { passenger_id: 1, name: 'Kenneth Gallagher', seat_number: '26F' },
+    { passenger_id: 2, name: 'Lisa Moran', seat_number: '23B' },
+    { passenger_id: 3, name: 'Mark Crosby', seat_number: '1E' },
+    { passenger_id: 4, name: 'Mark Roy', seat_number: '22E' },
+    { passenger_id: 5, name: 'Mark Nichols', seat_number: '12E' },
+    { passenger_id: 6, name: 'Melissa Rivas', seat_number: '27A' },
+    { passenger_id: 7, name: 'Andrew Bishop', seat_number: '17A' },
+    { passenger_id: 8, name: 'Susan Williams', seat_number: '7F' },
+    { passenger_id: 9, name: 'Shannon Cameron', seat_number: '13B' },
+    { passenger_id: 10, name: 'Jean Rodriguez', seat_number: '12D' }
+  ],
+  equipment: {
+    plane_type: 'Embraer E190',
+    total_seats: 90,
+    amenities: [ 'WiFi', 'TV', 'Power outlets' ]
+  },
+  flight_code: 'FLT-148'
+}
+```
 
 The default query distribution ratio is as follows:
 
@@ -49,7 +82,10 @@ The default query distribution ratio is as follows:
 * 10% INSERT queries
 * 10% DELETE queries
 
-While running, the workload generates a real-time report every 5 seconds, displaying the average number of executed queries for all CPUs used and their breakdown. Once the workload completes, it provides a final report with workload and collection statistics. 
+This default distribution provides a balanced and meaningful baseline for performance testing and stress simulations. However, users are encouraged to adjust these ratios to better align with their specific use cases and workload characteristics.
+
+During execution, the tool generates a real-time report every 5 seconds, showing the average number of queries executed across all utilized CPU cores, along with a detailed breakdown by operation type. At the end of the run, a final summary report is produced, providing statistics on overall workload performance and collection activity ([see sample output below](#Basic-Usage)).
+
 
 ## Usage
 
