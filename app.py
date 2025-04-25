@@ -78,7 +78,7 @@ insert_count = 0
 update_count = 0
 delete_count = 0
 select_count = 0
-flight_ids_inserted = set()  # To store flight_ids of inserted flights
+flight_ids_batch = set()  
 docs_deleted = 0
 docs_inserted = 0
 docs_updated = 0
@@ -144,11 +144,10 @@ def shard_collection(collection):
 def insert_flight_data(collection, batch_size=10):
     global insert_count, docs_inserted
     documents = []
-    flight_ids_batch = set()  # Temporary set to hold flight_ids
+    # flight_ids_batch = set()  # Temporary set to hold flight_ids
     for _ in range(batch_size):
         flight_id = random.randint(0, 9999999)
-        flight_ids_batch.add(flight_id)  # Store in a set for better performance
-
+        flight_ids_batch.add(flight_id)  # Store each flight_id that will be inserted so they can later be used for select, updates and deletes
         plane_type = random.choice(list(aircraft_seat_map.keys()))  # Randomly select a plane type
         total_seats = aircraft_seat_map[plane_type]  # Get corresponding seat count
         num_passengers = random.randint(1, min(70, total_seats))  # Ensure passengers don't exceed total seats for the given ac type
@@ -180,7 +179,6 @@ def insert_flight_data(collection, batch_size=10):
         result = collection.insert_many(documents)
         with lock:
             insert_count += 1  # The number of insert statements called
-            flight_ids_inserted.update(flight_ids_batch)  # Bulk insert flight_ids into the set
             docs_inserted += batch_size
         # print(f"Inserted batch of {batch_size} flights")
     except pymongo.errors.PyMongoError as e:
@@ -189,7 +187,7 @@ def insert_flight_data(collection, batch_size=10):
 def select_random_flights(collection, optimized):
     global select_count, docs_selected
     # Efficiently select a random flight_id from the set or use a random one if empty
-    flight_id = random.choice(tuple(flight_ids_inserted)) if flight_ids_inserted else random.randint(0, 99999)
+    flight_id = random.choice(tuple(flight_ids_batch)) if flight_ids_batch else random.randint(0, 99999)
     id_min = random.randint(0, 50000)
     id_max = random.randint(50001, 99999)
     ac = random.choice(list(aircraft_seat_map.keys()))  # Randomly select a plane type
@@ -224,7 +222,7 @@ def select_random_flights(collection, optimized):
 def update_random_flights(collection):
     global update_count, docs_updated
     # Efficiently select a random flight_id from the set or use a random one if empty
-    flight_id = random.choice(tuple(flight_ids_inserted)) if flight_ids_inserted else random.randint(0, 99999)
+    flight_id = random.choice(tuple(flight_ids_batch)) if flight_ids_batch else random.randint(0, 99999)
     minutes = random.randint(5, 120)
     gate = random.choice(string.ascii_uppercase) + str(random.randint(1, 50))
     plane_type = random.choice(list(aircraft_seat_map.keys()))  # Randomly select a plane type
@@ -248,7 +246,7 @@ def update_random_flights(collection):
 def delete_random_flights(collection):
     global delete_count, docs_deleted
     # Efficiently select a random flight_id from the set or use a random one if empty
-    flight_id = random.choice(tuple(flight_ids_inserted)) if flight_ids_inserted else random.randint(0, 99999)
+    flight_id = random.choice(tuple(flight_ids_batch)) if flight_ids_batch else random.randint(0, 99999)
     try:
         result = collection.delete_one({"flight_id": flight_id})
         with lock:
