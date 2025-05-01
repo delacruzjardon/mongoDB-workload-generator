@@ -355,6 +355,9 @@ def log_workload_config(args, workload_length, workload_ratios, workload_logged)
     # Check if the function has already been executed
     if workload_logged:
         return
+    # If running on a replicaset we know it can't be sharded, so we provide a clear message
+    if "replicaSet" in dbconfig and dbconfig["replicaSet"]:
+        args.shard = "Can't shard a replicaset, --shard option will be ignored and disabled automatically"
 
     table_width = 115
     workload_details = textwrap.dedent(f"""\n 
