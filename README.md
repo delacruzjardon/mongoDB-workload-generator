@@ -220,11 +220,11 @@ You have a wide range of options available, and the parameters are neither exclu
 
 8. Threads
 
-  - By default the workload uses 4 threads, this can be configured with a new thread count, e.g: `--threads 12`
+  - By default, the workload uses 4 threads. This can be adjusted by specifying a new thread count, for example: `--threads 12`. This setting affects the client—the workload tool itself—and determines how many threads will be started. The more threads you use, the more load will be generated on the database.
 
 9. CPUs
 
-  - By default, the workload uses a single CPU. However, you can specify the number of CPUs to utilize for the workload, allowing for high parallelism. This setting, when combined with the thread configuration, can significantly increase traffic to the MongoDB cluster, leading to immense throughput. If you select a number of CPUs greater than the available amount, the workload will automatically configure itself to use the maximum available CPUs., e.g: `--cpu 10`  
+  - By default, the workload uses a single CPU. However, you can specify the number of CPUs to utilize for the workload, allowing for high parallelism. This setting, when combined with the thread configuration, can significantly increase traffic to the MongoDB cluster, leading to immense throughput. If you select a number of CPUs greater than the available amount, the workload will automatically configure itself to use the maximum available CPUs., e.g: `--cpu 10`. This setting affects the client—the workload tool itself—and determines how many CPUs will be utilized. The more CPUs you use, the more load you will be able to generate on the database.
 
 10. Skipping certain workloads
 
