@@ -59,7 +59,7 @@ db = client["airlines"]
 letters = string.ascii_lowercase
 
 # Update query types. Queries are imported from above file
-update_type = random.choice(["seats", "delay", "gate", "equipment", "ac_seats"])
+update_type = random.choice(["seats", "delay", "gate", "equipment"])
 
 aircraft_seat_map = {
     "Airbus A320": 170,

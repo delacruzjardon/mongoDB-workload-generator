@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from joblib import Parallel, delayed
+from joblib import Parallel, delayed # type: ignore
 import multiprocessing
 import app  # Import your existing multi-threaded app
 import logging

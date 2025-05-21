@@ -53,17 +53,6 @@ def update_queries(minutes=1, seats=1, ac="Dash 8-400", gate="B2", update_type="
         return [
             {"$set": {"equipment.plane_type": ac}},
         ]
-    elif update_type == "ac_seats":
-        return [
-            {"$set": {
-            "equipment.plane_type": ac,
-            "equipment.total_seats": total_seats,
-            # Trim passengers if they exceed the new seat count
-            "passengers": {
-                "$slice": ["$passengers", total_seats]
-            }
-        }}
-        ]
 
 
     
