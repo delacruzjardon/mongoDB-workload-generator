@@ -1,57 +1,66 @@
 #!/usr/bin/env python3
+from args import parser
+import args as args_module  # so we can save the parsed args globally
 from joblib import Parallel, delayed # type: ignore
 import multiprocessing
-import app  # Import your existing multi-threaded app
+import app  
+# import custom as app
 import logging
 import time
 import textwrap
 import argparse
 import sys
 import os
-# Import a couple functions defined in the main app
-from app import log_total_ops_per_interval, create_collection, log_workload_config, workload_ratio_config  
-
-parser = argparse.ArgumentParser(description="MongoDB Workload Generator")
-parser.add_argument('--collection_name', type=str, default="flights", help="Name of the collection.")
-parser.add_argument('--collections', type=int, default=1, help="How many collections to create (default 1).")
-parser.add_argument('--recreate', action='store_true', help="Recreate the collection before running the test.")
-parser.add_argument('--shard', action='store_true', help="Enable sharding on the collection.")
-parser.add_argument('--runtime', type=str, default="60s", help="Duration of the load test, specify in seconds (e.g., 60s) or minutes (e.g., 5m) (default 60s).")
-parser.add_argument('--batch_size', type=int, default=10, help="Number of documents per batch insert (default 10).")
-parser.add_argument('--threads', type=int, default=4, help="Number of threads for simultaneous operations (default 4).")
-parser.add_argument('--skip_update', action='store_true', help="Skip update operations.")
-parser.add_argument('--skip_delete', action='store_true', help="Skip delete operations.")
-parser.add_argument('--skip_insert', action='store_true', help="Skip insert operations.")
-parser.add_argument('--skip_select', action='store_true', help="Skip select operations.")
-parser.add_argument('--insert_ratio', type=int, help="Percentage of insert operations (default 10).") # default is set via workload_ratio_config function
-parser.add_argument('--update_ratio', type=int, help="Percentage of update operations (default 20).") # default is set via workload_ratio_config function
-parser.add_argument('--delete_ratio', type=int, help="Percentage of delete operations (default 10).") # default is set via workload_ratio_config function
-parser.add_argument('--select_ratio', type=int, help="Percentage of select operations (default 60).") # default is set via workload_ratio_config function
-parser.add_argument('--report_interval', type=int, default=5, help="Interval (in seconds) between workload stats output (default 5s).")
-parser.add_argument('--cpu_ops', action='store_true', help="Workload AVG OPS per CPU. This option enables real-time AVG OPS per CPU instead of CPU aggregate.")
-parser.add_argument('--optimized', action='store_true', help="Run optimized workload only. (default runs all workloads)")
-parser.add_argument('--cpu', type=int, default=1, help="Number of CPUs to launch multiple instances of the workload in parallel (default 1).")
-parser.add_argument("--log", nargs="?", const=True, help="Log filename and path (must be specified if --log is used). Default is off -- output is not logged to a file")
+import json 
 
 args = parser.parse_args()
+args_module.args = args
 
+from logger import configure_logging
+configure_logging(args.log if hasattr(args, "log") else None)
+
+import mongo_client
+mongo_client.init()
 
 # Validate --log argument
 if args.log is True:  # If --log is used but no file is provided
     print("Error: The --log option requires a filename and path (e.g., /tmp/report.log).", file=sys.stderr)
     sys.exit(1)
 
-# Configure logging
-log_handlers = [logging.StreamHandler()]  # Always stream to console
-if args.log:  
-    log_handlers.append(logging.FileHandler(args.log, mode="a"))  # Log to file if specified
+collection_def = None
+shard_enabled = False
+COLLECTION_DEF_DIR = 'collections/'
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-    handlers=log_handlers
-)
+# Determine path to collection definition
+if os.path.exists(args.collection_definition):
+    collection_definition_path = args.collection_definition  # Use full or relative path as provided
+else:
+    collection_definition_path = os.path.join(COLLECTION_DEF_DIR, args.collection_definition)
+
+# Validate and load the collection definition file
+if not os.path.exists(collection_definition_path):
+    logging.error(f"Error: Collection definition file '{collection_definition_path}' not found.", file=sys.stderr)
+    sys.exit(1)
+
+try:
+    with open(collection_definition_path, 'r') as f:
+        collection_def = json.load(f)
+except json.JSONDecodeError as e:
+    logging.error(f"Error: Failed to parse JSON file '{collection_definition_path}': {e}", file=sys.stderr)
+    sys.exit(1)
+
+# Validate database, collection, and sharding
+for item in collection_def:
+    database = item.get("databaseName")
+    collection = item.get("collectionName")
+    shard_config = item.get("shardConfig")
+    shard_enabled = bool(shard_config)
+
+    if not database or not collection:
+        logging.error("Error: 'databaseName' and 'collectionName' must be provided in each collection definition.", file=sys.stderr)
+        sys.exit(1)
+    
+
 
 ################################################
 # Obtain workload summary and provide the output
@@ -160,9 +169,9 @@ def monitor_completion(completed_processes):
 # Make the call to start the workload
 # We use a slightly delayed start for each CPU to prevent some of the logging to get duplicated
 #####################################
-def delayed_start(args, process_id, completed_processes, output_queue, collection_queue, total_ops_dict):
+def delayed_start(args, process_id, completed_processes, output_queue, collection_queue, total_ops_dict, collection_def, created_collections):
     time.sleep(0.2)  # 200 milliseconds per process_id
-    return app.start_workload(args, process_id, completed_processes, output_queue, collection_queue, total_ops_dict)
+    return app.start_workload(args, process_id, completed_processes, output_queue, collection_queue, total_ops_dict, collection_def, created_collections)
 
 ###############################
 # Main section to start the app
@@ -184,13 +193,13 @@ if __name__ == "__main__":
         workload_length = str(duration) + " seconds"
     else:
         raise ValueError("Invalid time format. Use '60s' for seconds or '5m' for minutes.")    
+    
     # We only need to run the create statements once (not for every CPU), so we run those here instead of within the multiprocessor below
-    # Create the collections and sharding if configured
-    create_collection(args.collection_name, args.collections, args.recreate, args.shard)
+    created_collections = app.create_collection(collection_def, args.collections, args.recreate)
     start_time = time.time()
     # Configure Workload Ratio
-    workload_ratios = workload_ratio_config(args)
-    log_workload_config(args,workload_length,workload_ratios,workload_logged=False)
+    workload_ratios = app.workload_ratio_config(args)
+    app.log_workload_config(collection_definition_path,args,shard_enabled,workload_length,workload_ratios,workload_logged=False)
     workload_output = []
     collection_output = []
     # Create a shared manager for tracking each CPU process completion
@@ -221,7 +230,7 @@ if __name__ == "__main__":
 
         # Start a separate process for logging total operations across CPUs
         total_ops_logger = multiprocessing.Process(
-            target=log_total_ops_per_interval, 
+            target=app.log_total_ops_per_interval, 
             args=(args, total_ops_dict, stop_event, lock)
         )
         total_ops_logger.start()
@@ -229,7 +238,7 @@ if __name__ == "__main__":
         # Run workload in parallel using all available CPU cores as per --cpu argument (default is 1)
         parallel_executor = Parallel(n_jobs=args.cpu)
         parallel_executor(
-            delayed(delayed_start)(args, process_id, completed_processes, output_queue, collection_queue, total_ops_dict) for process_id in range(args.cpu)
+            delayed(delayed_start)(args, process_id, completed_processes, output_queue, collection_queue, total_ops_dict, collection_def, created_collections) for process_id in range(args.cpu)
         )
         # We add the workload and collection output from all CPUs to each appropriate queue so we can provide a summarized report after the workload has finished
         # Workload queue
