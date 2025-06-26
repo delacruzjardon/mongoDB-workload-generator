@@ -1,7 +1,7 @@
 # Configuration for MongoDB connection
 dbconfig = {
-    "username": "your_db_username",
-    "password": "your_db_password",
+    "username": "your_db_user",
+    "password": "your_db_pass",
     "port": 27017,
     "hosts": [
         "da-cl01-mongodb-mongos00",

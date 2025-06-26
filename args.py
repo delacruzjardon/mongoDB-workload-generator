@@ -2,7 +2,10 @@ import argparse
 
 parser = argparse.ArgumentParser(description="MongoDB Workload Generator")
 parser.add_argument('--collections', type=int, default=1, help="How many collections to create (default 1).")
-parser.add_argument('--collection_definition', type=str, default='airline.json', help="Name (if placed in collections folder) or full path + name of JSON file with your collection definition (default collections/airline.json).")
+parser.add_argument('--collection_definition', type=str,
+    help="(Optional) Name of a JSON file (from collections/), full path to a file, or a directory. "
+         "If omitted, all JSON files from 'collections/' will be used."
+)
 parser.add_argument('--recreate', action='store_true', help="Recreate the collection before running the test.")
 parser.add_argument('--runtime', type=str, default="60s", help="Duration of the load test, specify in seconds (e.g., 60s) or minutes (e.g., 5m) (default 60s).")
 parser.add_argument('--batch_size', type=int, default=10, help="Number of documents per batch insert (default 10).")

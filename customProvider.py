@@ -1,7 +1,7 @@
 from faker.providers import BaseProvider
 import random
 import string
-from datetime import datetime
+from datetime import datetime, timedelta
 
 class CustomProvider(BaseProvider):
     aircraft_seat_map = {
@@ -63,3 +63,53 @@ class CustomProvider(BaseProvider):
     def flight_code(self):
         return "FLT-" + str(random.randint(100, 999))
 
+    def car_type(self):
+        return random.choice([
+            "Compact", "Sedan", "SUV", "Convertible", "Pickup", "Minivan", "Luxury"
+        ])
+
+    def license_plate(self):
+        letters = ''.join(random.choices(string.ascii_uppercase, k=3))
+        numbers = ''.join(random.choices(string.digits, k=4))
+        return f"{letters}-{numbers}"
+
+    def rental_options(self):
+        return {
+            "gps": random.choice([True, False]),
+            "child_seat": random.choice([True, False]),
+            "extra_driver": random.choice([True, False]),
+            "insurance": random.choice(["basic", "standard", "premium"])
+        }
+    
+    def rental_info(self):
+        rental_date = self.generator.date_time_between(start_date='-30d', end_date='now')
+        return_date = rental_date + timedelta(days=random.randint(1, 14))
+        pickup_location = self.generator.city()
+        drop_off_location = self.generator.city()
+
+        return {
+            "rental_date": rental_date,
+            "return_date": return_date,
+            "pickup_location": pickup_location,
+            "drop_off_location": drop_off_location
+        }
+
+    def drivers(self):
+        num_drivers = random.randint(1, 2)
+        us_states = [
+            "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
+            "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
+            "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
+            "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
+            "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY"
+        ]
+        return [
+            {
+                "driver_id": i,
+                "name": self.generator.name(),
+                "age": random.randint(21, 70),
+                "license_number": ''.join(random.choices(string.ascii_uppercase + string.digits, k=10)),
+                "license_state": random.choice(us_states)
+            }
+            for i in range(1, num_drivers + 1)
+        ]

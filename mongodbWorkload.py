@@ -24,43 +24,98 @@ mongo_client.init()
 
 # Validate --log argument
 if args.log is True:  # If --log is used but no file is provided
-    print("Error: The --log option requires a filename and path (e.g., /tmp/report.log).", file=sys.stderr)
+    logging.error(f"Error: The --log option requires a filename and path (e.g., /tmp/report.log).")
     sys.exit(1)
 
-collection_def = None
+collection_def = []
 shard_enabled = False
-COLLECTION_DEF_DIR = 'collections/'
+COLLECTION_DEF_DIR = 'collections/'  # Default folder
 
-# Determine path to collection definition
-if os.path.exists(args.collection_definition):
-    collection_definition_path = args.collection_definition  # Use full or relative path as provided
-else:
-    collection_definition_path = os.path.join(COLLECTION_DEF_DIR, args.collection_definition)
+def load_collection_definitions(path_or_file=None):
+    definitions = []
 
-# Validate and load the collection definition file
-if not os.path.exists(collection_definition_path):
-    logging.error(f"Error: Collection definition file '{collection_definition_path}' not found.", file=sys.stderr)
-    sys.exit(1)
+    # Default: load all files in collections/ if nothing provided
+    if not path_or_file:
+        folder = COLLECTION_DEF_DIR
+        if not os.path.isdir(folder):
+            logging.error(f"Error: Default collection definition directory '{folder}' not found.")
+            sys.exit(1)
+        files_to_load = [
+            os.path.join(folder, f)
+            for f in os.listdir(folder)
+            if f.endswith('.json') and os.path.isfile(os.path.join(folder, f))
+        ]
+        if not files_to_load:
+            logging.error(f"No JSON files found in directory '{folder}'")
+            sys.exit(1)
 
-try:
-    with open(collection_definition_path, 'r') as f:
-        collection_def = json.load(f)
-except json.JSONDecodeError as e:
-    logging.error(f"Error: Failed to parse JSON file '{collection_definition_path}': {e}", file=sys.stderr)
-    sys.exit(1)
+    # If user provides a file
+    elif path_or_file.endswith('.json'):
+        # Prepend default directory if it's just a filename
+        if not os.path.isabs(path_or_file) and '/' not in path_or_file:
+            path_or_file = os.path.join(COLLECTION_DEF_DIR, path_or_file)
 
-# Validate database, collection, and sharding
-for item in collection_def:
-    database = item.get("databaseName")
-    collection = item.get("collectionName")
-    shard_config = item.get("shardConfig")
-    shard_enabled = bool(shard_config)
+        if os.path.isfile(path_or_file):
+            files_to_load = [path_or_file]
+        else:
+            logging.error(f"Error: JSON file '{path_or_file}' not found.")
+            sys.exit(1)
 
-    if not database or not collection:
-        logging.error("Error: 'databaseName' and 'collectionName' must be provided in each collection definition.", file=sys.stderr)
+    # If user provides a folder
+    elif os.path.isdir(path_or_file):
+        files_to_load = [
+            os.path.join(path_or_file, f)
+            for f in os.listdir(path_or_file)
+            if f.endswith('.json') and os.path.isfile(os.path.join(path_or_file, f))
+        ]
+        if not files_to_load:
+            logging.error(f"No JSON files found in directory '{path_or_file}'")
+            sys.exit(1)
+    else:
+        logging.error(f"Error: '{path_or_file}' is not a valid JSON file or directory.")
         sys.exit(1)
-    
 
+    # Load and validate each file
+    for filepath in files_to_load:
+        try:
+            with open(filepath, 'r') as f:
+                data = json.load(f)
+
+                if isinstance(data, dict):
+                    data = [data]
+                elif not isinstance(data, list):
+                    logging.warning(f"Skipping file '{filepath}': Root element must be a dict or list of dicts.")
+                    continue
+
+                for item in data:
+                    database = item.get("databaseName")
+                    collection = item.get("collectionName")
+                    shard_config = item.get("shardConfig")
+
+                    if not database or not collection:
+                        logging.error(f"Invalid collection definition in file '{filepath}': Missing 'databaseName' or 'collectionName'.")
+                        sys.exit(1)
+
+                    if shard_config:
+                        global shard_enabled
+                        shard_enabled = True
+
+                    definitions.append(item)
+
+                logging.info(f"Loaded {len(data)} collection definition(s) from '{filepath}'")
+
+        except json.JSONDecodeError as e:
+            logging.error(f"Error parsing JSON in file '{filepath}': {e}")
+            sys.exit(1)
+        except Exception as e:
+            logging.error(f"Unexpected error while loading '{filepath}': {e}")
+            sys.exit(1)
+
+    if not definitions:
+        logging.error("No valid collection definitions found after loading.")
+        sys.exit(1)
+
+    return definitions
 
 ################################################
 # Obtain workload summary and provide the output
@@ -93,13 +148,12 @@ def workload_summary(workload_output,elapsed_time):
 
     workload_stats = textwrap.dedent(f"""
 {'=' * table_width}
-{' Workload Stats (All CPUs Combined)':^{table_width - 2}}
+{' Combined Workload Stats ':^{table_width - 2}}
 {'=' * table_width}
 Workload Runtime: {runtime}
-CPUs Used: {args.cpu:<10}
 Total Operations: {total_stats["select"] + total_stats["insert"] + total_stats["update"] + total_stats["delete"]} (SELECT: {total_stats["select"]}, INSERT: {total_stats["insert"]}, UPDATE: {total_stats["update"]}, DELETE: {total_stats["delete"]})
-AVG QPS: {(total_stats["select"] + total_stats["insert"] + total_stats["update"] + total_stats["delete"]) / elapsed_time:.2f} (SELECTS: {total_stats["select"] / elapsed_time:.2f}, INSERTS: {total_stats["insert"] / elapsed_time:.2f}, UPDATES: {total_stats["update"] / elapsed_time:.2f}, DELETES: {total_stats["delete"] / elapsed_time:.2f})
-Documents Inserted: {total_stats["docs_inserted"]}, Matching Documents Selected: {total_stats["docs_selected"]}, Documents Updated: {total_stats["docs_updated"]}, Documents Deleted: {total_stats["docs_deleted"]}
+AVG Operations: {(total_stats["select"] + total_stats["insert"] + total_stats["update"] + total_stats["delete"]) / elapsed_time:.2f} (SELECTS: {total_stats["select"] / elapsed_time:.2f}, INSERTS: {total_stats["insert"] / elapsed_time:.2f}, UPDATES: {total_stats["update"] / elapsed_time:.2f}, DELETES: {total_stats["delete"] / elapsed_time:.2f})
+Total Documents Inserted: {total_stats["docs_inserted"]}, Total Documents Found: {total_stats["docs_selected"]}, Total Documents Updated: {total_stats["docs_updated"]}, Total Documents Deleted: {total_stats["docs_deleted"]}
 {'=' * table_width}\n""")
     logging.info(workload_stats)
 
@@ -118,11 +172,11 @@ def collection_summary(collection_output):
 
     # Build the entire table as a single string
     table = "\n"
-    table += "="*80 + "\n"
-    table += f"|{'Collection Stats':^78}| \n"
-    table += "="*80 + "\n"
-    table += f"|    {'Name':^20} | {'Sharded':^16} | {'Size':^14} | {'Documents':^15}|\n"
-    table += "="*80 + "\n"
+    table += "="*100 + "\n"
+    table += f"|{'Collection Stats':^98}| \n"
+    table += "="*100 + "\n"
+    table += f"| {'Database':^20} | {'Collection':^20} | {'Sharded':^16} | {'Size':^14} | {'Documents':^15}|\n"
+    table += "="*100 + "\n"
 
     # Print the unique stats for each collection
     for coll in unique_coll_stats:
@@ -138,9 +192,9 @@ def collection_summary(collection_output):
                 size_display = f"{size_in_mb:.2f} MB"
 
             # Add the collection's stats to the table
-            table += f"|    {coll_name:^20} | {str(stats['sharded']):^16} | {size_display:^14} | {stats['documents']:^15}|\n"
+            table += f"| {str(stats['db']):^20} | {coll_name:^20} | {str(stats['sharded']):^16} | {size_display:^14} | {stats['documents']:^15}|\n"
 
-    table += "="*80 + "\n"
+    table += "="*100 + "\n"
     # Output the entire table in one call
     logging.info(table)    
 
@@ -170,19 +224,24 @@ def monitor_completion(completed_processes):
 # We use a slightly delayed start for each CPU to prevent some of the logging to get duplicated
 #####################################
 def delayed_start(args, process_id, completed_processes, output_queue, collection_queue, total_ops_dict, collection_def, created_collections):
-    time.sleep(0.2)  # 200 milliseconds per process_id
+    time.sleep(0.2)
     return app.start_workload(args, process_id, completed_processes, output_queue, collection_queue, total_ops_dict, collection_def, created_collections)
 
 ###############################
 # Main section to start the app
 ###############################
 if __name__ == "__main__":
-    # Validate the number of CPUs selected aren't more than the total number of CPUs available, if so, assign the max available CPU
+    # Parse collection definitions
+    collection_definition_path = getattr(args, 'collection_definition', None)
+    collection_def = load_collection_definitions(collection_definition_path)
+
+    # Validate CPU count
     available_cpus = os.cpu_count()
     if args.cpu > available_cpus:
         logging.info(f"Cannot set CPU to {args.cpu} as there are only {available_cpus} available. Workload will be configured to use {available_cpus} CPUs.")
         args.cpu = available_cpus
-    # Validate workload duration
+
+    # Parse runtime
     if args.runtime.endswith("m"):
         duration = int(args.runtime[:-1])        
         args.runtime = duration * 60
@@ -193,31 +252,26 @@ if __name__ == "__main__":
         workload_length = str(duration) + " seconds"
     else:
         raise ValueError("Invalid time format. Use '60s' for seconds or '5m' for minutes.")    
-    
-    # We only need to run the create statements once (not for every CPU), so we run those here instead of within the multiprocessor below
+
+    # Create collections (run once)
     created_collections = app.create_collection(collection_def, args.collections, args.recreate)
+
     start_time = time.time()
-    # Configure Workload Ratio
+
+    # Configure workload ratio
     workload_ratios = app.workload_ratio_config(args)
-    app.log_workload_config(collection_definition_path,args,shard_enabled,workload_length,workload_ratios,workload_logged=False)
+    app.log_workload_config(collection_def, args, shard_enabled, workload_length, workload_ratios, workload_logged=False)
+
     workload_output = []
     collection_output = []
-    # Create a shared manager for tracking each CPU process completion
-    with multiprocessing.Manager() as manager:
-        # Create list where each index corresponds to a CPU core (False initially)
-        completed_processes = manager.list([False] * args.cpu)
-        # Queue for workload output
-        output_queue = manager.Queue()
-        # Queue for collection summary
-        collection_queue = manager.Queue()
-        # Shared flag to ensure certain workload output messages are only displayed once. This is done to prevent unnecessasry duplication of worklog output
-        # when the workload is being run using multiple CPUs
-        # Boolean flag to track if the workload summary has already been displayed
-        workload_logged = manager.Value('b', False)
-        # Boolean flag to track if the collection summary has already been displayed
-        collection_logged = manager.Value('b', False)  
 
-        # Shared dictionary for storing per-CPU operations
+    with multiprocessing.Manager() as manager:
+        completed_processes = manager.list([False] * args.cpu)
+        output_queue = manager.Queue()
+        collection_queue = manager.Queue()
+        workload_logged = manager.Value('b', False)
+        collection_logged = manager.Value('b', False)
+
         total_ops_dict = manager.dict({
             'insert': manager.list([0] * args.cpu),
             'update': manager.list([0] * args.cpu),
@@ -228,31 +282,30 @@ if __name__ == "__main__":
         lock = multiprocessing.Lock()
         stop_event = multiprocessing.Event()
 
-        # Start a separate process for logging total operations across CPUs
         total_ops_logger = multiprocessing.Process(
-            target=app.log_total_ops_per_interval, 
+            target=app.log_total_ops_per_interval,
             args=(args, total_ops_dict, stop_event, lock)
         )
         total_ops_logger.start()
 
-        # Run workload in parallel using all available CPU cores as per --cpu argument (default is 1)
+        # Launch workload in parallel
         parallel_executor = Parallel(n_jobs=args.cpu)
         parallel_executor(
-            delayed(delayed_start)(args, process_id, completed_processes, output_queue, collection_queue, total_ops_dict, collection_def, created_collections) for process_id in range(args.cpu)
+            delayed(delayed_start)(args, process_id, completed_processes, output_queue, collection_queue, total_ops_dict, collection_def, created_collections)
+            for process_id in range(args.cpu)
         )
-        # We add the workload and collection output from all CPUs to each appropriate queue so we can provide a summarized report after the workload has finished
-        # Workload queue
+
+        # Gather CPU outputs
         while not output_queue.empty():
             workload_output.append(output_queue.get())
-        # Collection queue
         while not collection_queue.empty():
             collection_output.append(collection_queue.get())
-        # Monitor the workload completion status
+
         monitor_completion(completed_processes)
 
-    # Generate the final workload summary
+    # Summaries
     elapsed_time = time.time() - start_time
     collection_summary(collection_output)
-    workload_summary(workload_output,elapsed_time)
+    workload_summary(workload_output, elapsed_time)
 
     

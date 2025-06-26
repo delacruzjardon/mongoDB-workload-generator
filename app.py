@@ -11,6 +11,7 @@ import time
 import threading
 import logging
 import textwrap
+import pprint
 import signal
 import sys
 import re
@@ -210,6 +211,11 @@ def collect_shard_key_metadata(random_db,random_collection):
 def create_collection(collection_def, collections=1, recreate=False):
     created_collections = []
     global collection_primary_keys
+
+    # Normalize input: if a single dict is passed, wrap in list
+    if isinstance(collection_def, dict):
+        collection_def = [collection_def]
+
     for entry in collection_def:
         base_collection_name = entry["collectionName"]
         db_name = entry["databaseName"]
@@ -276,9 +282,9 @@ def shard_collection(db_name, collection_name, shard_config):
     except pymongo.errors.PyMongoError as e:
         logging.error(f"Error sharding collection '{db_name}.{collection_name}': {e}")
 
-################
-# CRUD Functions
-################
+##################################################
+# Create random data based on datatype an provider
+##################################################
 def generate_random_document(field_schema, context=None):
     doc = {}
     if context is None:
@@ -291,36 +297,48 @@ def generate_random_document(field_schema, context=None):
 
         provider = props.get("provider", None)
 
-        # Handle methods requiring context
-        if provider in ("passengers",):
-            # Requires total_seats, num_passengers, and fake instance
-            doc[field] = fake.passengers(
-                total_seats=context.get("total_seats", 100),
-                num_passengers=context.get("num_passengers", 10),
-                fake=fake
-            )
-        elif provider == "equip":
-            doc[field] = fake.equip(
-                context.get("plane_type", "Airbus A320"),
-                context.get("total_seats", 100)
-            )
-        elif provider == "total_seats":
-            # Just return total seats as string
-            doc[field] = str(context.get("total_seats", 100))
-        else:
-            # Fallback to your original logic
+        try:
+            if provider == "passengers":
+                doc[field] = fake.passengers(
+                    total_seats=context.get("total_seats", 100),
+                    num_passengers=context.get("num_passengers", 10),
+                    fake=fake
+                )
+            elif provider == "equip":
+                doc[field] = fake.equip(
+                    context.get("plane_type", "Airbus A320"),
+                    context.get("total_seats", 100)
+                )
+            elif provider == "total_seats":
+                doc[field] = str(context.get("total_seats", 100))
+            elif provider == "seats_available":
+                doc[field] = context.get("seats_available", 0)    
+            elif provider:
+                provider_func = getattr(fake, provider, None)
+                if callable(provider_func):
+                    doc[field] = provider_func()
+                else:
+                    logging.warning(f"Unhandled provider '{provider}' for field '{field}'")
+                    doc[field] = generate_random_value(props)
+            else:
+                doc[field] = generate_random_value(props)
+        except Exception as e:
+            logging.error(f"Error generating value for field '{field}' with provider '{provider}': {e}")
             doc[field] = generate_random_value(props)
 
-    # Add seats_available separately since it's in context, but not in field_schema explicitly
     if "seats_available" in field_schema:
         doc["seats_available"] = context.get("seats_available", 0)
 
     return doc
 
+################
+# CRUD Functions
+################
+
 ##############
 # Insert Docs
 ##############
-def insert_documents(base_collection, random_db, random_collection, field_schema, collection_def, batch_size=10):
+def insert_documents(base_collection, random_db, random_collection, collection_def, batch_size=10):
     global insert_count, docs_inserted, inserted_primary_keys, collection_primary_keys
 
     documents = []
@@ -328,21 +346,21 @@ def insert_documents(base_collection, random_db, random_collection, field_schema
 
     coll_entry = next(
         (item for item in collection_def
-         if item.get("databaseName") == random_db and item.get("collectionName") == base_collection ),
+         if item.get("databaseName") == random_db and item.get("collectionName") == base_collection),
         None
     )
     if not coll_entry:
         logging.error(f"No schema definition found for {random_db}.{base_collection}")
         return
 
+    field_schema = coll_entry.get("fieldName", {})
     primary_key = get_primary_key_from_collection(coll_entry)
     collection_primary_keys[(random_db, random_collection)] = primary_key
 
-    # Check if we need special aircraft context for this schema
     need_context = requires_aircraft_context(field_schema)
 
     for _ in range(batch_size):
-        context = generate_aircraft_context() if need_context else None
+        context = generate_aircraft_context() if need_context else {}
         doc = generate_random_document(field_schema, context=context)
 
         if primary_key != "_id" and primary_key not in doc:
@@ -370,14 +388,16 @@ def insert_documents(base_collection, random_db, random_collection, field_schema
     except pymongo.errors.PyMongoError as e:
         logging.error(f"Error inserting documents into {random_db}.{random_collection}: {e}")
 
+
 ##############
 # Select Docs
 ##############
 def select_documents(base_collection, random_db, random_collection, collection_def, optimized):
-    global select_count, docs_selected
+    global select_count, docs_selected, collection_shard_metadata
 
     collection = get_client()[random_db][random_collection]
 
+    # Find the matching collection schema
     coll_entry = next(
         (item for item in collection_def
          if item.get("databaseName") == random_db and item.get("collectionName") == base_collection),
@@ -389,18 +409,16 @@ def select_documents(base_collection, random_db, random_collection, collection_d
 
     field_schema = coll_entry.get("fieldName", {})
     primary_key = get_primary_key_from_collection(coll_entry)
-
-    # Get field type
     primary_key_type = field_schema.get(primary_key, {}).get("type", "string")
 
-    # Use a random inserted values for primary key if they exist; otherwise generate one
+    # Use existing primary key if available
     pk_values = inserted_primary_keys.get((random_db, random_collection), [])
     if pk_values:
         pk_value = random.choice(pk_values)
     else:
         pk_value = generate_random_value(primary_key_type)
 
-    # Build full query param list
+    # Build full query parameter list
     query_params = [pk_value]
     query_fields = [primary_key]
     query_types = [primary_key_type]
@@ -414,7 +432,7 @@ def select_documents(base_collection, random_db, random_collection, collection_d
         query_fields.append(field_name)
         query_types.append(bson_type)
 
-    # Pass pre-generated values to query generator
+    # Generate select queries
     optimized_queries, ineffective_queries, query_projections = mongodbLoadQueries.select_queries(
         query_params, query_fields, query_types
     )
@@ -422,26 +440,44 @@ def select_documents(base_collection, random_db, random_collection, collection_d
     try:
         if optimized and optimized_queries:
             query = random.choice(optimized_queries)
-            # logging.info(f"Query: {query}")
-            flight_count = collection.count_documents(query)
-            if flight_count:
+
+            # Shard-awareness: check that all shard keys are in the query
+            shard_info = collection_shard_metadata.get((random_db, random_collection), {})
+            is_sharded = shard_info.get("sharded", False)
+            shard_keys = shard_info.get("shard_keys", [])
+
+            if is_sharded and shard_keys:
+                missing_keys = [k for k in shard_keys if k not in query]
+                if missing_keys:
+                    logging.debug(
+                        f"Skipping optimized select on sharded collection {random_db}.{random_collection}: "
+                        f"Query missing shard key fields {missing_keys}. Query: {query}"
+                    )
+                    return
+
+            count = collection.count_documents(query)
+            if count:
                 with lock:
-                    docs_selected += flight_count
-                # logging.info(f"Documents matched: {flight_count}")
+                    docs_selected += count
+
         elif ineffective_queries:
             query_index = random.randint(0, len(ineffective_queries) - 1)
             query = ineffective_queries[query_index]
             projection = query_projections[query_index] if query_index < len(query_projections) else None
+
             cursor = collection.find(query, projection).limit(5) if projection else collection.find(query).limit(5)
             results = list(cursor)
             result_count = len(results)
             if result_count:
                 with lock:
                     docs_selected += result_count
-                # logging.info(f"Documents returned: {result_count}")
-        select_count += 1
+
+        with lock:
+            select_count += 1
+
     except pymongo.errors.PyMongoError as e:
-        logging.error(f"Error selecting from collection {collection.name} using {primary_key}: {e}")
+        logging.error(f"Error selecting from collection {random_db}.{random_collection}: {e}")
+
 
 ##############
 # Update Docs
@@ -553,7 +589,7 @@ def update_documents(base_collection, random_db, random_collection, collection_d
 # Delete Docs
 ##############
 def delete_documents(base_collection, random_db, random_collection, collection_def, optimized):
-    global delete_count, docs_deleted
+    global delete_count, docs_deleted, collection_shard_metadata
     collection = get_client()[random_db][random_collection]
 
     # Find schema
@@ -604,14 +640,29 @@ def delete_documents(base_collection, random_db, random_collection, collection_d
             logging.warning("No delete queries generated")
             return
 
+        # Shard-awareness: check if query has full shard key
+        shard_info = collection_shard_metadata.get((random_db, random_collection), {})
+        is_sharded = shard_info.get("sharded", False)
+        shard_keys = shard_info.get("shard_keys", [])
+
+        if is_sharded and shard_keys:
+            missing_keys = [k for k in shard_keys if k not in query]
+            if missing_keys:
+                logging.debug(
+                    f"Skipping delete on sharded collection {random_db}.{random_collection}: "
+                    f"Query missing shard key fields {missing_keys}. Query: {query}"
+                )
+                return
+
         result = collection.delete_one(query)
         with lock:
             delete_count += 1
             if result.deleted_count > 0:
                 docs_deleted += 1
-                # logging.info(f"Deleted documents matching: {query}")
+
     except Exception as e:
         logging.error(f"Error deleting documents with query {query}: {e}")
+
 
 #######################
 # End of CRUD functions
@@ -704,18 +755,27 @@ def workload_ratio_config(args):
 ###############################
 # Output workload configuration
 ###############################
-def log_workload_config(collection_definition_path, args, shard_enabled, workload_length, workload_ratios, workload_logged):
+def log_workload_config(collection_def, args, shard_enabled, workload_length, workload_ratios, workload_logged):
     # Check if the function has already been executed
     if workload_logged:
         return
+
+    if isinstance(collection_def, dict):
+        collection_def = [collection_def]
+
+    # Extract and format collection and database names
+    # Create a single-line string with all collections and databases
+    collection_info = " | ".join(
+    [f"{item['databaseName']}.{item['collectionName']}" for item in collection_def]
+    )
 
     table_width = 115
     workload_details = textwrap.dedent(f"""\n 
     Duration: {workload_length}
     CPUs: {args.cpu}
     Threads: (Per CPU: {args.threads} | Total: {args.cpu * args.threads})    
-    Collections: {args.collections}
-    Collection Definition: {collection_definition_path}
+    Databases and Collections: {collection_info}   
+    Instances of the same collection: {args.collections}
     Configure Sharding: {shard_enabled}
     Insert batch size: {args.batch_size}
     Optimized workload: {args.optimized}
@@ -826,7 +886,8 @@ def workload_stats(select_count, insert_count, update_count, delete_count, proce
 # collection_queue which is later summarized by the main application file
 ##########################################################################
 def collection_stats(collection_def, collections, collection_queue):
-    collstats_dict = {}  # Dictionary to store unique collection stats
+    collstats_dict = {}  # Dictionary to store all collection stats
+
     for entry in collection_def:
         base_collection_name = entry["collectionName"]
         db_name = entry["databaseName"]
@@ -839,13 +900,16 @@ def collection_stats(collection_def, collections, collection_queue):
             try:
                 collstats = db.command("collstats", collection_name_with_suffix)
                 collstats_dict[collection_name_with_suffix] = {
+                    "db": db_name,
                     "sharded": collstats.get("sharded", False),
                     "size": collstats.get("size", 0),
                     "documents": collstats.get("count", 0),
-                    }
+                }
             except pymongo.errors.PyMongoError as e:
-                print(f"Error retrieving stats: {e}")
-        collection_queue.put(collstats_dict)
+                print(f"Error retrieving stats for {db_name}.{collection_name_with_suffix}: {e}")
+
+    # Put full aggregated stats after all definitions are processed
+    collection_queue.put(collstats_dict)
 
 #############################################################
 # Randomly choose operations and collections for the workload
@@ -883,7 +947,7 @@ def worker(args, created_collections, collection_def):
 
         if operation == "insert" and not skip_insert:
             # insert_flight_data(collection, batch_size)
-            insert_documents(base_collection, random_db, random_collection, field_schema, collection_def, batch_size=10)
+            insert_documents(base_collection, random_db, random_collection, collection_def, batch_size=10)
         elif operation == "update" and not skip_update:
             # update_documents(random_collection)
             update_documents(base_collection, random_db, random_collection, collection_def, optimized)
