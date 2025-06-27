@@ -1,4 +1,4 @@
-from faker.providers import BaseProvider
+from faker.providers import BaseProvider # type: ignore
 import random
 import string
 from datetime import datetime, timedelta

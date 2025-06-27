@@ -774,12 +774,12 @@ def log_workload_config(collection_def, args, shard_enabled, workload_length, wo
     Duration: {workload_length}
     CPUs: {args.cpu}
     Threads: (Per CPU: {args.threads} | Total: {args.cpu * args.threads})    
-    Databases and Collections: {collection_info}   
+    Databases and Collections: ({collection_info})   
     Instances of the same collection: {args.collections}
     Configure Sharding: {shard_enabled}
     Insert batch size: {args.batch_size}
     Optimized workload: {args.optimized}
-    Workload ratio: SELECTS: {int(round(float(workload_ratios['select_ratio']), 0))}% | INSERTS: {int(round(float(workload_ratios['insert_ratio']), 0))}% | UPDATES: {int(round(float(workload_ratios['update_ratio']), 0))}% | DELETES: {int(round(float(workload_ratios['delete_ratio']), 0))}%
+    Workload ratio: (SELECTS: {int(round(float(workload_ratios['select_ratio']), 0))}% | INSERTS: {int(round(float(workload_ratios['insert_ratio']), 0))}% | UPDATES: {int(round(float(workload_ratios['update_ratio']), 0))}% | DELETES: {int(round(float(workload_ratios['delete_ratio']), 0))}%)
     Report frequency: {args.report_interval} seconds
     Report logfile: {args.log}\n
     {'=' * table_width}

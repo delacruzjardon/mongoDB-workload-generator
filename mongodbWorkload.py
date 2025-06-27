@@ -153,7 +153,7 @@ def workload_summary(workload_output,elapsed_time):
 Workload Runtime: {runtime}
 Total Operations: {total_stats["select"] + total_stats["insert"] + total_stats["update"] + total_stats["delete"]} (SELECT: {total_stats["select"]}, INSERT: {total_stats["insert"]}, UPDATE: {total_stats["update"]}, DELETE: {total_stats["delete"]})
 AVG Operations: {(total_stats["select"] + total_stats["insert"] + total_stats["update"] + total_stats["delete"]) / elapsed_time:.2f} (SELECTS: {total_stats["select"] / elapsed_time:.2f}, INSERTS: {total_stats["insert"] / elapsed_time:.2f}, UPDATES: {total_stats["update"] / elapsed_time:.2f}, DELETES: {total_stats["delete"] / elapsed_time:.2f})
-Total Documents Inserted: {total_stats["docs_inserted"]}, Total Documents Found: {total_stats["docs_selected"]}, Total Documents Updated: {total_stats["docs_updated"]}, Total Documents Deleted: {total_stats["docs_deleted"]}
+Total: (Documents Inserted: {total_stats["docs_inserted"]} | Documents Found: {total_stats["docs_selected"]} | Documents Updated: {total_stats["docs_updated"]} | Documents Deleted: {total_stats["docs_deleted"]})
 {'=' * table_width}\n""")
     logging.info(workload_stats)
 
