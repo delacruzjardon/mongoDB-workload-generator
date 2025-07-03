@@ -291,6 +291,7 @@ def generate_random_document(field_schema, context=None):
         context = {}
 
     for field, props in field_schema.items():
+        # Determine the BSON type (used for fallback if no provider or specific logic)
         bson_type = props.get("bsonType") or props.get("type")
         if isinstance(bson_type, dict) and "bsonType" in bson_type:
             bson_type = bson_type["bsonType"]
@@ -298,35 +299,53 @@ def generate_random_document(field_schema, context=None):
         provider = props.get("provider", None)
 
         try:
-            if provider == "passengers":
-                doc[field] = fake.passengers(
-                    total_seats=context.get("total_seats", 100),
-                    num_passengers=context.get("num_passengers", 10),
-                    fake=fake
-                )
-            elif provider == "equip":
-                doc[field] = fake.equip(
-                    context.get("plane_type", "Airbus A320"),
-                    context.get("total_seats", 100)
-                )
-            elif provider == "total_seats":
-                doc[field] = str(context.get("total_seats", 100))
-            elif provider == "seats_available":
-                doc[field] = context.get("seats_available", 0)    
-            elif provider:
-                provider_func = getattr(fake, provider, None)
-                if callable(provider_func):
-                    doc[field] = provider_func()
+            # --- Primary Logic: Handle custom providers first ---
+            if provider:
+                # Handle specific providers that require context or special arguments
+                if provider == "passengers":
+                    doc[field] = fake.passengers(
+                        total_seats=context.get("total_seats", 100),
+                        num_passengers=context.get("num_passengers", 10),
+                        fake=fake
+                    )
+                elif provider == "equip":
+                    doc[field] = fake.equip(
+                        context.get("plane_type", "Airbus A320"),
+                        context.get("total_seats", 100)
+                    )
+                elif provider == "total_seats":
+                    # Note: You might want to consider if this should be an int
+                    # if the schema type is int, otherwise it will be a string.
+                    doc[field] = str(context.get("total_seats", 100))
+                elif provider == "seats_available":
+                    doc[field] = context.get("seats_available", 0)
                 else:
-                    logging.warning(f"Unhandled provider '{provider}' for field '{field}'")
-                    doc[field] = generate_random_value(props)
+                    # For all other custom providers defined in the schema
+                    provider_func = getattr(fake, provider, None)
+                    if callable(provider_func):
+                        try:
+                            value = provider_func()
+                            # Optional: verify output type if needed
+                            doc[field] = value
+                        except Exception as e:
+                            logging.warning(f"Provider '{provider}' for field '{field}' failed with error: {e}. Falling back.")
+                            doc[field] = generate_random_value(props)
+                    else:
+                        logging.warning(f"Provider '{provider}' not callable or not found for field '{field}'.")
+                        doc[field] = generate_random_value(props)
+            # --- Fallback Logic: If no provider is specified ---
             else:
                 doc[field] = generate_random_value(props)
+
         except Exception as e:
-            logging.error(f"Error generating value for field '{field}' with provider '{provider}': {e}")
+            logging.error(f"Error generating value for field '{field}' with provider '{provider}': {e}. Attempting fallback.")
+            # Ensure a value is still generated in case of an error with the primary logic
             doc[field] = generate_random_value(props)
 
-    if "seats_available" in field_schema:
+    # Special handling for 'seats_available' if it's not generated via a provider
+    # This might be redundant if 'seats_available' is handled by a provider or if it's part of the context handling.
+    # Keep it if there's a specific reason for it to override or ensure its presence.
+    if "seats_available" in field_schema and "seats_available" not in doc:
         doc["seats_available"] = context.get("seats_available", 0)
 
     return doc
