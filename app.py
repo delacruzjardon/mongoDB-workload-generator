@@ -19,6 +19,10 @@ from urllib.parse import urlencode  # Properly format URL parameters
 from multiprocessing import Lock
 from mongodbCreds import dbconfig 
 from mongo_client import get_client
+import args as args_module
+
+
+import custom_query_executor
 
 # Initialize MongoClient once globally.
 import mongo_client
@@ -79,58 +83,6 @@ def requires_aircraft_context(field_schema):
     if "seats_available" in field_schema:
         return True
     return False
-
-def generate_random_value(bson_type):
-    # Default assignments
-    provider = None
-    type_val = "string"  # fallback default type
-
-    # Handle dict input with possible 'type' and 'provider'
-    if isinstance(bson_type, dict):
-        type_val = bson_type.get("type", "string")
-        provider = bson_type.get("provider", None)
-    elif isinstance(bson_type, list):
-        type_val = random.choice(bson_type)
-    else:
-        type_val = bson_type
-
-    # Try using faker provider if configured in the JSON file and defined and valid in customProvider
-    if provider:
-        faker_func = getattr(fake, provider, None)
-        if callable(faker_func):
-            return faker_func()
-
-    # Default type-based fallback. If a custom provider nor faker provider is used we fallback to default generic values
-    match type_val:
-        case "string":
-            return fake.word()
-        case "int":
-            return random.randint(1, 10000)
-        case "double":
-            return round(random.uniform(10.0, 10000.0), 2)
-        case "bool":
-            return random.choice([True, False])
-        case "date":
-            if isinstance(bson_type, dict):
-                start = bson_type.get("startDate")
-                end = bson_type.get("endDate")
-                if start and end:
-                    return fake.date_time_between(start_date=start, end_date=end)
-            return fake.date_time()
-        case "objectId":
-            return bson.ObjectId()
-        case "array":
-            return [fake.word() for _ in range(random.randint(1, 5))]
-        case "object":
-            return {"randomKey": fake.word()}
-        case "timestamp":
-            return datetime.utcnow()
-        case "long":
-            return random.randint(10000000000, 99999999999)
-        case "decimal":
-            return bson.Decimal128(str(round(random.uniform(0.1, 9999.99), 2)))
-        case _:
-            return None
 
 ######################################################################
 # Function to prepend shard key to each index if not already included
@@ -204,6 +156,7 @@ def collect_shard_key_metadata(random_db,random_collection):
 
     except pymongo.errors.PyMongoError as e:
         logging.error(f"Error retrieving shard metadata for {ns}: {e}")
+
 
 ####################
 # Create collections
@@ -282,69 +235,83 @@ def shard_collection(db_name, collection_name, shard_config):
     except pymongo.errors.PyMongoError as e:
         logging.error(f"Error sharding collection '{db_name}.{collection_name}': {e}")
 
+########################
+# Random value generator
+########################
+def generate_random_value(type_val):
+    """A simple helper to generate a random value based on a BSON type string."""
+    match type_val:
+        case "string":
+            return fake.word()
+        case "int":
+            return random.randint(1, 10000)
+        case "double":
+            return round(random.uniform(10.0, 10000.0), 2)
+        case "bool":
+            return random.choice([True, False])
+        case "date":
+            return fake.date_time()
+        case "objectId":
+            return bson.ObjectId()
+        case "array":
+            # This is the generic fallback for an array
+            return [fake.word() for _ in range(random.randint(1, 3))]
+        case "object":
+            # This is the generic fallback for an object
+            return {"randomKey": fake.word()}
+        case "timestamp":
+            return datetime.utcnow()
+        case "long":
+            return random.randint(10000000000, 99999999999)
+        case "decimal":
+            return bson.Decimal128(str(round(random.uniform(0.1, 9999.99), 2)))
+        case _:
+            return None
+
 ##################################################
 # Create random data based on datatype an provider
 ##################################################
 def generate_random_document(field_schema, context=None):
     doc = {}
-    if context is None:
-        context = {}
+    context = context or {}
 
     for field, props in field_schema.items():
-        # Determine the BSON type (used for fallback if no provider or specific logic)
-        bson_type = props.get("bsonType") or props.get("type")
-        if isinstance(bson_type, dict) and "bsonType" in bson_type:
-            bson_type = bson_type["bsonType"]
-
-        provider = props.get("provider", None)
-
-        try:
-            # --- Primary Logic: Handle custom providers first ---
-            if provider:
-                # Handle specific providers that require context or special arguments
-                if provider == "passengers":
-                    doc[field] = fake.passengers(
-                        total_seats=context.get("total_seats", 100),
-                        num_passengers=context.get("num_passengers", 10),
-                        fake=fake
-                    )
-                elif provider == "equip":
-                    doc[field] = fake.equip(
-                        context.get("plane_type", "Airbus A320"),
-                        context.get("total_seats", 100)
-                    )
-                elif provider == "total_seats":
-                    # Note: You might want to consider if this should be an int
-                    # if the schema type is int, otherwise it will be a string.
-                    doc[field] = str(context.get("total_seats", 100))
-                elif provider == "seats_available":
-                    doc[field] = context.get("seats_available", 0)
-                else:
-                    # For all other custom providers defined in the schema
-                    provider_func = getattr(fake, provider, None)
-                    if callable(provider_func):
-                        try:
-                            value = provider_func()
-                            # Optional: verify output type if needed
-                            doc[field] = value
-                        except Exception as e:
-                            logging.warning(f"Provider '{provider}' for field '{field}' failed with error: {e}. Falling back.")
-                            doc[field] = generate_random_value(props)
-                    else:
-                        logging.warning(f"Provider '{provider}' not callable or not found for field '{field}'.")
-                        doc[field] = generate_random_value(props)
-            # --- Fallback Logic: If no provider is specified ---
+        provider = props.get("provider")
+        
+        # 1. Prioritize using the provider if it's defined in the schema
+        if provider:
+            # Handle special context-aware providers from your original code
+            if provider == "passengers":
+                doc[field] = fake.passengers(
+                    total_seats=context.get("total_seats", 100),
+                    num_passengers=context.get("num_passengers", 10),
+                    fake=fake
+                )
+            elif provider == "equip":
+                doc[field] = fake.equip(
+                    context.get("plane_type", "Airbus A320"),
+                    context.get("total_seats", 100)
+                )
+            elif provider == "total_seats":
+                doc[field] = str(context.get("total_seats", 100))
+            elif provider == "seats_available":
+                doc[field] = context.get("seats_available", 0)
+            
+            # Handle all other normal providers (like drivers, rental_info, etc.)
             else:
-                doc[field] = generate_random_value(props)
+                provider_func = getattr(fake, provider, None)
+                if callable(provider_func):
+                    doc[field] = provider_func()
+                else:
+                    logging.warning(f"Provider '{provider}' not found for field '{field}'.")
+                    doc[field] = None
+        
+        # 2. If NO provider is specified, fall back to the basic type
+        else:
+            bson_type = props.get("type", "string")
+            doc[field] = generate_random_value(bson_type)
 
-        except Exception as e:
-            logging.error(f"Error generating value for field '{field}' with provider '{provider}': {e}. Attempting fallback.")
-            # Ensure a value is still generated in case of an error with the primary logic
-            doc[field] = generate_random_value(props)
-
-    # Special handling for 'seats_available' if it's not generated via a provider
-    # This might be redundant if 'seats_available' is handled by a provider or if it's part of the context handling.
-    # Keep it if there's a specific reason for it to override or ensure its presence.
+    # Add a final safety check for context fields that might not have a provider
     if "seats_available" in field_schema and "seats_available" not in doc:
         doc["seats_available"] = context.get("seats_available", 0)
 
@@ -357,7 +324,7 @@ def generate_random_document(field_schema, context=None):
 ##############
 # Insert Docs
 ##############
-def insert_documents(base_collection, random_db, random_collection, collection_def, batch_size=10):
+def insert_documents(args,base_collection, random_db, random_collection, collection_def, batch_size=10):
     global insert_count, docs_inserted, inserted_primary_keys, collection_primary_keys
 
     documents = []
@@ -411,10 +378,11 @@ def insert_documents(base_collection, random_db, random_collection, collection_d
 ##############
 # Select Docs
 ##############
-def select_documents(base_collection, random_db, random_collection, collection_def, optimized):
+def select_documents(args, base_collection, random_db, random_collection, collection_def, optimized):
     global select_count, docs_selected, collection_shard_metadata
-
-    collection = get_client()[random_db][random_collection]
+    
+    client = mongo_client.get_client()
+    collection = client[random_db][random_collection]
 
     # Find the matching collection schema
     coll_entry = next(
@@ -460,21 +428,31 @@ def select_documents(base_collection, random_db, random_collection, collection_d
         if optimized and optimized_queries:
             query = random.choice(optimized_queries)
 
-            # Shard-awareness: check that all shard keys are in the query
+            # Shard-awareness check
             shard_info = collection_shard_metadata.get((random_db, random_collection), {})
-            is_sharded = shard_info.get("sharded", False)
-            shard_keys = shard_info.get("shard_keys", [])
-
-            if is_sharded and shard_keys:
-                missing_keys = [k for k in shard_keys if k not in query]
+            if shard_info.get("sharded"):
+                missing_keys = [k for k in shard_info.get("shard_keys", []) if k not in query]
                 if missing_keys:
-                    logging.debug(
-                        f"Skipping optimized select on sharded collection {random_db}.{random_collection}: "
-                        f"Query missing shard key fields {missing_keys}. Query: {query}"
-                    )
+                    logging.debug(f"Skipping select on sharded collection {random_db}.{random_collection}: Query missing shard keys {missing_keys}.")
                     return
 
+            # --- DEBUG LOGGING ---
+            if args.debug:
+                # ---- ADD THIS LINE FOR DIAGNOSTICS ----
+                # logging.debug(f"Executing query on client connected to: {client.HOST}:{client.PORT}")
+                # ---------------------------------------
+
+                # Use logging.debug for these messages
+                logging.debug(f"\n--- [DEBUG] Running COUNT on: {random_db}.{random_collection} ---")
+                logging.debug(f"Query: {pprint.pformat(query)}")
+
             count = collection.count_documents(query)
+            
+            if args.debug:
+                # Use logging.debug for these messages
+                logging.debug(f"Result: Found {count} document(s).")
+                logging.debug("---------------------------------------------------\n")
+            
             if count:
                 with lock:
                     docs_selected += count
@@ -484,9 +462,25 @@ def select_documents(base_collection, random_db, random_collection, collection_d
             query = ineffective_queries[query_index]
             projection = query_projections[query_index] if query_index < len(query_projections) else None
 
-            cursor = collection.find(query, projection).limit(5) if projection else collection.find(query).limit(5)
+            # --- DEBUG LOGGING ---
+            if args.debug:
+                # Use logging.debug for these messages
+                logging.debug(f"\n--- [DEBUG] Running FIND on: {random_db}.{random_collection} ---")
+                logging.debug(f"Query: {pprint.pformat(query)}")
+                if projection:
+                    logging.debug(f"Projection: {pprint.pformat(projection)}")
+
+            cursor = collection.find(query, projection).limit(5)
             results = list(cursor)
             result_count = len(results)
+
+            if args.debug:
+                # Use logging.debug for these messages
+                logging.debug(f"Result: Found {result_count} document(s).")
+                if results:
+                    logging.debug(f"Documents:\n{pprint.pformat(results)}")
+                logging.debug("-------------------------------------------------\n")
+
             if result_count:
                 with lock:
                     docs_selected += result_count
@@ -497,11 +491,10 @@ def select_documents(base_collection, random_db, random_collection, collection_d
     except pymongo.errors.PyMongoError as e:
         logging.error(f"Error selecting from collection {random_db}.{random_collection}: {e}")
 
-
 ##############
 # Update Docs
 ##############
-def update_documents(base_collection, random_db, random_collection, collection_def, optimized):
+def update_documents(args, base_collection, random_db, random_collection, collection_def, optimized):
     global update_count, docs_updated, collection_shard_metadata
 
     collection = get_client()[random_db][random_collection]
@@ -599,15 +592,14 @@ def update_documents(base_collection, random_db, random_collection, collection_d
         with lock:
             update_count += 1
             if result.modified_count > 0:
-                docs_updated += 1
+                docs_updated += result.modified_count
     except Exception as e:
         logging.error(f"Error updating document {primary_key}={pk_value}: {e}")
-
 
 ##############
 # Delete Docs
 ##############
-def delete_documents(base_collection, random_db, random_collection, collection_def, optimized):
+def delete_documents(args, base_collection, random_db, random_collection, collection_def, optimized):
     global delete_count, docs_deleted, collection_shard_metadata
     collection = get_client()[random_db][random_collection]
 
@@ -630,31 +622,40 @@ def delete_documents(base_collection, random_db, random_collection, collection_d
     if pk_values:
         pk_value = random.choice(pk_values)
     else:
+        # If no inserted keys, generate a random one. This delete might not match an existing doc.
         pk_value = generate_random_value(primary_key_type)
+        logging.debug(f"No inserted PKs found for {random_db}.{random_collection}. Generating random PK for delete: {pk_value}")
 
-    query_params = [pk_value]
-    query_fields = [primary_key]
-    query_types = [primary_key_type]
 
+    query_params = []
+    query_fields = []
+    query_types = []
+
+    # Collect parameters for all fields, including the primary key, for delete query generation
     for field_name, field_info in field_schema.items():
-        if field_name == primary_key:
-            continue
         ftype = field_info.get("bsonType") or field_info.get("type", "string")
-        val = generate_random_value(ftype)
+        if field_name == primary_key:
+            val = pk_value # Use the selected PK value
+        else:
+            val = generate_random_value(ftype) # Generate random value for other fields
         query_params.append(val)
         query_fields.append(field_name)
         query_types.append(ftype)
 
-    # Generate delete queries
+
+    # Generate delete queries, passing primary_key and pk_value explicitly
     optimized_queries, ineffective_queries = mongodbLoadQueries.delete_queries(
-        query_params, query_fields, query_types
+        query_params, query_fields, query_types, primary_key, pk_value # <-- Pass primary_key and pk_value
     )
 
     try:
+        query = {} # Initialize query to avoid UnboundLocalError
         if optimized and optimized_queries:
             query = random.choice(optimized_queries)
+            delete_op_type = "one" # Optimized deletes should use delete_one
         elif ineffective_queries:
             query = random.choice(ineffective_queries)
+            delete_op_type = "many" # Ineffective deletes should use delete_many
         else:
             logging.warning("No delete queries generated")
             return
@@ -664,20 +665,36 @@ def delete_documents(base_collection, random_db, random_collection, collection_d
         is_sharded = shard_info.get("sharded", False)
         shard_keys = shard_info.get("shard_keys", [])
 
-        if is_sharded and shard_keys:
+        # If sharded and we are doing an "ineffective" delete (which means delete_many)
+        # without a full shard key, we should ideally skip it or be aware of its implications.
+        # The current check is for *any* missing shard key in the query, which is fine
+        # for `delete_one`. For `delete_many` on sharded collections, if the query
+        # doesn't contain the shard key, it will scatter reads/writes.
+        if is_sharded and shard_keys and delete_op_type == "one": # Only check for `delete_one` as `delete_many` is by design broader
             missing_keys = [k for k in shard_keys if k not in query]
             if missing_keys:
                 logging.debug(
-                    f"Skipping delete on sharded collection {random_db}.{random_collection}: "
+                    f"Skipping delete_one on sharded collection {random_db}.{random_collection}: "
                     f"Query missing shard key fields {missing_keys}. Query: {query}"
                 )
                 return
 
-        result = collection.delete_one(query)
+        if delete_op_type == "one":
+            result = collection.delete_one(query)
+        else: # delete_op_type == "many"
+            # For delete_many, we don't strictly require shard key in query
+            # but it's important to understand this will be a broadcast operation if not present.
+            result = collection.delete_many(query)
+
         with lock:
             delete_count += 1
             if result.deleted_count > 0:
-                docs_deleted += 1
+                docs_deleted += result.deleted_count
+                # If a document was deleted by its primary key, remove it from inserted_primary_keys
+                if primary_key in query and query[primary_key] == pk_value:
+                    if (random_db, random_collection) in inserted_primary_keys and pk_value in inserted_primary_keys[(random_db, random_collection)]:
+                        inserted_primary_keys[(random_db, random_collection)].remove(pk_value)
+                        logging.debug(f"Removed PK {pk_value} from cache after successful delete.")
 
     except Exception as e:
         logging.error(f"Error deleting documents with query {query}: {e}")
@@ -793,11 +810,11 @@ def log_workload_config(collection_def, args, shard_enabled, workload_length, wo
     Duration: {workload_length}
     CPUs: {args.cpu}
     Threads: (Per CPU: {args.threads} | Total: {args.cpu * args.threads})    
-    Databases and Collections: ({collection_info})   
-    Instances of the same collection: {args.collections}
+    Database and Collection: ({collection_info})   
+    Instances of the same collection: {"Disabled" if args.custom_queries else args.collections}
     Configure Sharding: {shard_enabled}
     Insert batch size: {args.batch_size}
-    Optimized workload: {args.optimized}
+    Optimized workload: {"Disabled" if args.custom_queries else args.optimized}
     Workload ratio: (SELECTS: {int(round(float(workload_ratios['select_ratio']), 0))}% | INSERTS: {int(round(float(workload_ratios['insert_ratio']), 0))}% | UPDATES: {int(round(float(workload_ratios['update_ratio']), 0))}% | DELETES: {int(round(float(workload_ratios['delete_ratio']), 0))}%)
     Report frequency: {args.report_interval} seconds
     Report logfile: {args.log}\n
@@ -809,21 +826,6 @@ def log_workload_config(collection_def, args, shard_enabled, workload_length, wo
     # Set the flag to True to prevent further logging
     workload_logged = True  
  
-#################################
-# Output real-time workload stats
-#################################
-def log_ops_per_interval(args, report_interval, total_ops_per_sec, selects_per_sec, inserts_per_sec, updates_per_sec, deletes_per_sec, process_id):
-    if args.cpu_ops: # We only run this if the user has chosen per cpu ops report
-        ops_per_cpu = (
-            f"AVG Operations last {report_interval}s per CPU (CPU #{process_id}) : "
-            f"{total_ops_per_sec:.2f} "
-            f"(SELECTS: {selects_per_sec:.2f}, "
-            f"INSERTS: {inserts_per_sec:.2f}, "
-            f"UPDATES: {updates_per_sec:.2f}, "
-            f"DELETES: {deletes_per_sec:.2f})"
-        )
-        with log_lock:  # This ensures only one process can log at a time
-            logging.info(ops_per_cpu)
 
 ##########################################
 # Calculate operations per report_interval
@@ -854,28 +856,27 @@ def calculate_ops_per_interval(args, allThreads, report_interval=5, process_id=0
                 total_ops_dict['delete'][process_id] = deletes_per_sec
                 total_ops_dict['select'][process_id] = selects_per_sec
 
-        log_ops_per_interval(args, report_interval, total_ops_per_sec, selects_per_sec, inserts_per_sec, updates_per_sec, deletes_per_sec, process_id)
+        
 
 ##############################################
 # Output total operations across all CPUs
 ##############################################
 def log_total_ops_per_interval(args, total_ops_dict, stop_event, lock):
-    if not args.cpu_ops: # We only run this if the user has not chosen per cpu ops report
-        while not stop_event.is_set():
-            time.sleep(args.report_interval)
-            with lock:
-                total_selects = sum(total_ops_dict['select'])
-                total_inserts = sum(total_ops_dict['insert'])
-                total_updates = sum(total_ops_dict['update'])
-                total_deletes = sum(total_ops_dict['delete'])
-                total_ops = total_selects + total_inserts + total_updates + total_deletes
+    while not stop_event.is_set():
+        time.sleep(args.report_interval)
+        with lock:
+            total_selects = sum(total_ops_dict['select'])
+            total_inserts = sum(total_ops_dict['insert'])
+            total_updates = sum(total_ops_dict['update'])
+            total_deletes = sum(total_ops_dict['delete'])
+            total_ops = total_selects + total_inserts + total_updates + total_deletes
 
-                if total_ops: # We only provide the output if the total ops isn't zero
-                    logging.info(
-                        f"AVG Operations last {args.report_interval}s ({args.cpu} CPUs): {total_ops:.2f} "
-                        f"(SELECTS: {total_selects:.2f}, INSERTS: {total_inserts:.2f}, "
-                        f"UPDATES: {total_updates:.2f}, DELETES: {total_deletes:.2f})"
-                    )
+            if total_ops: # We only provide the output if the total ops isn't zero
+                logging.info(
+                    f"AVG Operations last {args.report_interval}s ({args.cpu} CPUs): {total_ops:.2f} "
+                    f"(SELECTS: {total_selects:.2f}, INSERTS: {total_inserts:.2f}, "
+                    f"UPDATES: {total_updates:.2f}, DELETES: {total_deletes:.2f})"
+                )
 
 #####################################################################
 # Obtain real-time workload stats for each CPU. This is stored in the 
@@ -933,7 +934,11 @@ def collection_stats(collection_def, collections, collection_queue):
 #############################################################
 # Randomly choose operations and collections for the workload
 #############################################################
-def worker(args, created_collections, collection_def): 
+
+#############################################################
+# WORKER FOR RANDOMIZED WORKLOAD (No user query file)
+#############################################################
+def random_worker(args, created_collections, collection_def):
     runtime = args.runtime 
     batch_size = args.batch_size
     skip_update = args.skip_update
@@ -965,29 +970,111 @@ def worker(args, created_collections, collection_def):
             base_collection = random_collection
 
         if operation == "insert" and not skip_insert:
-            # insert_flight_data(collection, batch_size)
-            insert_documents(base_collection, random_db, random_collection, collection_def, batch_size=10)
+            insert_documents(args, base_collection, random_db, random_collection, collection_def, batch_size=10)
         elif operation == "update" and not skip_update:
-            # update_documents(random_collection)
-            update_documents(base_collection, random_db, random_collection, collection_def, optimized)
+            update_documents(args, base_collection, random_db, random_collection, collection_def, optimized)
         elif operation == "delete" and not skip_delete:
-            # delete_random_flights(random_collection)
-            delete_documents(base_collection, random_db, random_collection, collection_def, optimized)
+            delete_documents(args, base_collection, random_db, random_collection, collection_def, optimized)
         elif operation == "select" and not skip_select:
-            select_documents(base_collection, random_db,random_collection, collection_def, optimized)
+            select_documents(args, base_collection, random_db,random_collection, collection_def, optimized)
+
+
+#############################################################
+# WORKER FOR CUSTOM QUERY MODE (User query file provided)
+# Insert calls still use our random generator
+#############################################################
+def custom_worker(args, created_collections, collection_def, user_queries):
+    global select_count, insert_count, update_count, delete_count, docs_selected, docs_inserted, docs_updated, docs_deleted
+    runtime = args.runtime
+    
+    # 1. Pre-process and categorize the user queries from the JSON file
+    select_queries = [q for q in user_queries if q.get("operation") in ["find", "aggregate"]]
+    update_queries = [q for q in user_queries if q.get("operation") in ["updateOne", "updateMany"]]
+    delete_queries = [q for q in user_queries if q.get("operation") in ["deleteOne", "deleteMany"]]
+
+    # 2. Set up the operations and weights based on ratios
+    operations = []
+    weights = []
+    if not args.skip_select and args.select_ratio > 0 and select_queries:
+        operations.append("select")
+        weights.append(args.select_ratio)
+    if not args.skip_update and args.update_ratio > 0 and update_queries:
+        operations.append("update")
+        weights.append(args.update_ratio)
+    if not args.skip_insert and args.insert_ratio > 0:
+        operations.append("insert")
+        weights.append(args.insert_ratio)
+    if not args.skip_delete and args.delete_ratio > 0 and delete_queries:
+        operations.append("delete")
+        weights.append(args.delete_ratio)
+
+    if not operations:
+        logging.warning("No operations available for the given ratios and user query file. Worker is idle.")
+        return
+
+    if args.debug:
+        # ---- ADD THIS LINE FOR DIAGNOSTICS ----
+        logging.debug(f"Hybrid worker started. Operations enabled: {operations}")
+    work_start = time.time()
+
+    while time.time() - work_start < runtime and not stop_event.is_set():
+        # 3. Choose an operation type based on the workload ratio
+        chosen_op = random.choices(operations, weights=weights, k=1)[0]
+        
+        # 4. Execute the chosen operation
+        if chosen_op == "select":
+            query_def = random.choice(select_queries)
+            op_type, op_count, docs_affected = custom_query_executor.execute_user_query(args, query_def, fake, generate_random_value)
+            if op_type:
+                with lock:
+                    select_count += op_count
+                    docs_selected += docs_affected
+        
+        elif chosen_op == "update":
+            query_def = random.choice(update_queries)
+            op_type, op_count, docs_affected = custom_query_executor.execute_user_query(args, query_def, fake, generate_random_value)
+            if op_type:
+                with lock:
+                    update_count += op_count
+                    docs_updated += docs_affected
+
+        elif chosen_op == "delete":
+            query_def = random.choice(delete_queries)
+            op_type, op_count, docs_affected = custom_query_executor.execute_user_query(args, query_def, fake, generate_random_value)
+            if op_type:
+                with lock:
+                    delete_count += op_count
+                    docs_deleted += docs_affected            
+
+        # Insert functionality can be our own random and doesn't require the user providing theirs since we will be inserting random records
+        elif chosen_op == "insert":
+            random_db, random_collection = random.choice(created_collections)
+            base_collection = re.sub(r'_\d+$', '', random_collection) if args.collections > 1 else random_collection
+            # Fallback to original random insert function
+            insert_documents(args, base_collection, random_db, random_collection, collection_def, args.batch_size)
+
 
 ####################
 # Start the workload
 ####################
-def start_workload(args, process_id="", completed_processes="",output_queue="", collection_queue="", total_ops_dict=None, collection_def=None, created_collections=None):
+def start_workload(args, process_id="", completed_processes="",output_queue="", collection_queue="", total_ops_dict=None, collection_def=None, created_collections=None, user_queries=None):
     # Handler for Ctrl+C
     signal.signal(signal.SIGINT, handle_exit)
  
     try:
         # Start multiple worker threads
         allThreads = []
+
+        # Decide which worker to use based on whether user_queries were provided
+        if user_queries:
+            target_worker = custom_worker
+            worker_args = (args, created_collections, collection_def, user_queries)
+        else:
+            target_worker = random_worker
+            worker_args = (args, created_collections, collection_def)
+
         for _ in range(args.threads):
-            thread = threading.Thread(target=worker, args=(args, created_collections, collection_def))
+            thread = threading.Thread(target=target_worker, args=worker_args)
             thread.start()
             allThreads.append(thread)
 
@@ -1011,7 +1098,9 @@ def start_workload(args, process_id="", completed_processes="",output_queue="", 
         collection_stats(collection_def, args.collections, collection_queue)
         # Get workload stats
         workload_stats(select_count, insert_count, update_count, delete_count, process_id, output_queue)
-        
+
+
+
 ####################
 # Start the workload
 ####################

@@ -13,11 +13,30 @@ import sys
 import os
 import json 
 
+from custom_query_executor import load_queries_from_path
+
 args = parser.parse_args()
 args_module.args = args
 
+# If a user query path is given, a collection definition must also be provided.
+if args.custom_queries and not args.collection_definition:
+    logging.fatal(
+        "Error: The --collection_definition parameter is required when using --custom_queries."
+    )
+    sys.exit(1)
+
+# If a user query path is provided, force the number of collections to 1.
+if args.custom_queries and args.collections > 1:
+    logging.info(
+        f"User query path provided. Forcing --collections value from {args.collections} to 1."
+    )
+    args.collections = 1
+
 from logger import configure_logging
-configure_logging(args.log if hasattr(args, "log") else None)
+# ---- SET LOGGING LEVEL AND CONFIGURE HANDLERS ----
+log_level = logging.DEBUG if args.debug else logging.INFO
+configure_logging(log_file=args.log if hasattr(args, "log") else None, level=log_level)
+# --------------------------------------------------
 
 import mongo_client
 mongo_client.init()
@@ -30,12 +49,13 @@ if args.log is True:  # If --log is used but no file is provided
 collection_def = []
 shard_enabled = False
 COLLECTION_DEF_DIR = 'collections/'  # Default folder
+CUSTOM_QUERIES_DIR = 'queries/' # Default queries folder
 
 def load_collection_definitions(path_or_file=None):
     definitions = []
 
-    # Default: load all files in collections/ if nothing provided
-    if not path_or_file:
+    # Default: load all files in collections/ if nothing provided or --collection_definition used without value
+    if path_or_file is None or path_or_file == 'collections':
         folder = COLLECTION_DEF_DIR
         if not os.path.isdir(folder):
             logging.error(f"Error: Default collection definition directory '{folder}' not found.")
@@ -116,6 +136,68 @@ def load_collection_definitions(path_or_file=None):
         sys.exit(1)
 
     return definitions
+
+def load_custom_queries(path_or_file=None):
+    queries = []
+
+    # Default: load all files in queries/ if nothing provided or --custom_queries used without value
+    if path_or_file is None or path_or_file == 'queries':
+        folder = CUSTOM_QUERIES_DIR
+        if not os.path.isdir(folder):
+            logging.error(f"Error: Default custom queries directory '{folder}' not found.")
+            sys.exit(1)
+        files_to_load = [
+            os.path.join(folder, f)
+            for f in os.listdir(folder)
+            if f.endswith('.json') and os.path.isfile(os.path.join(folder, f))
+        ]
+        if not files_to_load:
+            logging.error(f"No JSON files found in directory '{folder}'")
+            sys.exit(1)
+    # If user provides a file
+    elif path_or_file.endswith('.json'):
+        if not os.path.isabs(path_or_file) and '/' not in path_or_file:
+            path_or_file = os.path.join(CUSTOM_QUERIES_DIR, path_or_file) # Consider if this is the desired behavior for queries
+        if os.path.isfile(path_or_file):
+            files_to_load = [path_or_file]
+        else:
+            logging.error(f"Error: JSON query file '{path_or_file}' not found.")
+            sys.exit(1)
+    # If user provides a folder
+    elif os.path.isdir(path_or_file):
+        files_to_load = [
+            os.path.join(path_or_file, f)
+            for f in os.listdir(path_or_file)
+            if f.endswith('.json') and os.path.isfile(os.path.join(path_or_file, f))
+        ]
+        if not files_to_load:
+            logging.error(f"No JSON files found in directory '{path_or_file}'")
+            sys.exit(1)
+    else:
+        logging.error(f"Error: '{path_or_file}' is not a valid JSON query file or directory.")
+        sys.exit(1)
+
+    for filepath in files_to_load:
+        try:
+            with open(filepath, 'r') as f:
+                data = json.load(f)
+                if not isinstance(data, list):
+                    logging.warning(f"Skipping file '{filepath}': Root element for queries must be a list of dicts.")
+                    continue
+                queries.extend(data)
+                logging.info(f"Loaded {len(data)} custom queries from '{filepath}'")
+        except json.JSONDecodeError as e:
+            logging.error(f"Error parsing JSON in file '{filepath}': {e}")
+            sys.exit(1)
+        except Exception as e:
+            logging.error(f"Unexpected error while loading '{filepath}': {e}")
+            sys.exit(1)
+
+    if not queries:
+        logging.error("No valid custom queries found after loading.")
+        sys.exit(1)
+
+    return queries
 
 ################################################
 # Obtain workload summary and provide the output
@@ -223,17 +305,23 @@ def monitor_completion(completed_processes):
 # Make the call to start the workload
 # We use a slightly delayed start for each CPU to prevent some of the logging to get duplicated
 #####################################
-def delayed_start(args, process_id, completed_processes, output_queue, collection_queue, total_ops_dict, collection_def, created_collections):
+def delayed_start(args, process_id, completed_processes, output_queue, collection_queue, total_ops_dict, collection_def, created_collections, user_queries=None):
     time.sleep(0.2)
-    return app.start_workload(args, process_id, completed_processes, output_queue, collection_queue, total_ops_dict, collection_def, created_collections)
+    return app.start_workload(args, process_id, completed_processes, output_queue, collection_queue, total_ops_dict, collection_def, created_collections, user_queries)
+
 
 ###############################
 # Main section to start the app
 ###############################
 if __name__ == "__main__":
     # Parse collection definitions
-    collection_definition_path = getattr(args, 'collection_definition', None)
-    collection_def = load_collection_definitions(collection_definition_path)
+    # collection_definition_path = getattr(args, 'collection_definition', None)
+    # collection_def = load_collection_definitions(collection_definition_path)
+
+    if args.collection_definition:
+        collection_def = load_collection_definitions(args.collection_definition)
+    else:
+        collection_def = load_collection_definitions() # Load default if no argument provided
 
     # Validate CPU count
     available_cpus = os.cpu_count()
@@ -256,11 +344,41 @@ if __name__ == "__main__":
     # Create collections (run once)
     created_collections = app.create_collection(collection_def, args.collections, args.recreate)
 
+    # Load user queries if the file is provided
+    user_queries = None
+    # if args.custom_queries:
+    #     user_queries = load_queries_from_path(args.custom_queries)
+    #     if user_queries is None: # None indicates a fatal error during loading
+    #         sys.exit(1)
+
+    if args.custom_queries:
+        user_queries = load_custom_queries(args.custom_queries)
+        if user_queries is None: # None indicates a fatal error during loading
+                sys.exit(1)
+
+    # After loading both definitions and queries, validate them.
+    if user_queries:
+        # Create a set of valid "database.collection" names
+        valid_collections = {f"{c['databaseName']}.{c['collectionName']}" for c in collection_def}
+        
+        for query in user_queries:
+            target_coll = f"{query.get('database')}.{query.get('collection')}"
+            
+            if target_coll not in valid_collections:
+                logging.fatal(
+                    f"Validation Error: A query targets collection '{target_coll}', "
+                    f"but this collection is not defined in your --collection_definition files."
+                )
+                sys.exit(1)
+        logging.info("All custom queries were successfully validated against collection definitions.")
+
     start_time = time.time()
 
-    # Configure workload ratio
+    # Configure workload ratio 
     workload_ratios = app.workload_ratio_config(args)
+        
     app.log_workload_config(collection_def, args, shard_enabled, workload_length, workload_ratios, workload_logged=False)
+
 
     workload_output = []
     collection_output = []
@@ -291,7 +409,7 @@ if __name__ == "__main__":
         # Launch workload in parallel
         parallel_executor = Parallel(n_jobs=args.cpu)
         parallel_executor(
-            delayed(delayed_start)(args, process_id, completed_processes, output_queue, collection_queue, total_ops_dict, collection_def, created_collections)
+            delayed(delayed_start)(args, process_id, completed_processes, output_queue, collection_queue, total_ops_dict, collection_def, created_collections, user_queries)
             for process_id in range(args.cpu)
         )
 

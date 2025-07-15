@@ -14,6 +14,18 @@ class CustomProvider(BaseProvider):
         "ERJ-145": 50
     }
 
+    # Define the list of states once as a class attribute
+    us_states = [
+        "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
+        "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
+        "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
+        "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
+        "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY"
+    ]
+
+    def state_abbr(self):
+        return random.choice(self.us_states)
+
     def flight_id(self):
         # Generates a random flight_id (integer)
         return random.randint(0, 9999999)
@@ -96,20 +108,13 @@ class CustomProvider(BaseProvider):
 
     def drivers(self):
         num_drivers = random.randint(1, 2)
-        us_states = [
-            "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
-            "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
-            "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
-            "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
-            "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY"
-        ]
         return [
             {
                 "driver_id": i,
                 "name": self.generator.name(),
                 "age": random.randint(21, 70),
                 "license_number": ''.join(random.choices(string.ascii_uppercase + string.digits, k=10)),
-                "license_state": random.choice(us_states)
+                "license_state": self.state_abbr()
             }
             for i in range(1, num_drivers + 1)
         ]

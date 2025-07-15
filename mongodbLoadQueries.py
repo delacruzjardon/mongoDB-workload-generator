@@ -148,7 +148,7 @@ def update_queries(field_names, values, field_types, primary_key, pk_value):
     return optimized_updates, ineffective_updates
 
 
-def delete_queries(param_list, field_names, field_types):
+def delete_queries(param_list, field_names, field_types, primary_key_name, primary_key_value): # Added pk_name, pk_value
     """
     Generate optimized and ineffective delete queries.
     Optimized queries always include the primary key.
@@ -157,59 +157,93 @@ def delete_queries(param_list, field_names, field_types):
     optimized_queries = []
     ineffective_queries = []
 
-    if not param_list or not field_names or len(param_list) != len(field_names) or len(field_types) != len(field_names):
+    if not param_list or not field_names or not field_types or \
+       len(param_list) != len(field_names) or len(field_types) != len(field_names):
         return [], []
 
-    pk_field = field_names[0]
-    pk_value = param_list[0]
+    # The primary key and its value should be explicitly passed
+    # as they are the cornerstone for optimized deletes.
+    pk_field = primary_key_name
+    pk_value = primary_key_value
 
-    for i in range(1, len(param_list)):
+    # Always add a simple primary key only delete to optimized queries
+    optimized_queries.append({pk_field: pk_value})
+    # Add an empty filter for ineffective for delete_many
+    ineffective_queries.append({})
+
+
+    # Iterate through other fields to create more specific queries
+    # We use field_names directly, param_list contains values in the same order
+    for i in range(len(field_names)):
         field = field_names[i]
-        value = param_list[i]
+        value = param_list[i] # param_list has the values
         ftype = field_types[i]
 
-        base_query = {pk_field: pk_value}
+        # Skip the primary key field itself as it's handled above or by direct filters
+        if field == pk_field:
+            continue
+
+        # Base for optimized queries: always include the primary key
+        optimized_base_filter = {pk_field: pk_value}
 
         if ftype in ["int", "long", "double", "decimal"]:
-            # Numeric exact and range deletes
-            optimized_queries.append({**base_query, field: value})
-            optimized_queries.append({**base_query, field: {"$gt": value}})
-            optimized_queries.append({**base_query, field: {"$lt": value}})
+            # Optimized numeric exact and range deletes
+            optimized_queries.append({**optimized_base_filter, field: value})
+            optimized_queries.append({**optimized_base_filter, field: {"$gt": value}})
+            optimized_queries.append({**optimized_base_filter, field: {"$lt": value}})
 
+            # Ineffective numeric deletes (no primary key)
             ineffective_queries.append({field: value})
             ineffective_queries.append({field: {"$gt": value}})
             ineffective_queries.append({field: {"$lt": value}})
 
         elif ftype == "string":
-            optimized_queries.append({**base_query, field: value})
-            optimized_queries.append({**base_query, field: {"$regex": value}})
+            # Optimized string exact and regex deletes
+            optimized_queries.append({**optimized_base_filter, field: value})
+            optimized_queries.append({**optimized_base_filter, field: {"$regex": value}})
 
+            # Ineffective string deletes (no primary key)
             ineffective_queries.append({field: value})
             ineffective_queries.append({field: {"$regex": value}})
 
         elif ftype == "bool":
-            optimized_queries.append({**base_query, field: value})
+            # Optimized boolean exact match
+            optimized_queries.append({**optimized_base_filter, field: value})
+
+            # Ineffective boolean exact match
             ineffective_queries.append({field: value})
 
         elif ftype in ["date", "timestamp"]:
-            optimized_queries.append({**base_query, field: value})
+            # Optimized date exact match
+            optimized_queries.append({**optimized_base_filter, field: value})
+
+            # Ineffective date exact match
             ineffective_queries.append({field: value})
 
         elif ftype == "objectId":
-            optimized_queries.append({**base_query, field: value})
+            # Optimized ObjectId exact match
+            optimized_queries.append({**optimized_base_filter, field: value})
+
+            # Ineffective ObjectId exact match
+            ineffective_queries.append({field: value}) # Still want these for non-optimized runs
 
         elif ftype == "array":
-            optimized_queries.append({**base_query, field: {"$in": value}})
-            ineffective_queries.append({field: {"$in": value}})
+            # Optimized array deletes
+            if isinstance(value, list) and value: # Ensure value is a non-empty list
+                 optimized_queries.append({**optimized_base_filter, field: {"$in": value}})
+            else: # If not a list, treat as single item for $in
+                 optimized_queries.append({**optimized_base_filter, field: {"$in": [value]}})
+
+            # Ineffective array deletes
+            if isinstance(value, list) and value:
+                ineffective_queries.append({field: {"$in": value}})
+            else:
+                ineffective_queries.append({field: {"$in": [value]}})
 
         else:
-            # Fallback exact match
-            optimized_queries.append({**base_query, field: value})
+            # Fallback exact match for other types
+            optimized_queries.append({**optimized_base_filter, field: value})
             ineffective_queries.append({field: value})
-
-    # Also add simple primary key only deletes
-    optimized_queries.insert(0, {pk_field: pk_value})
-    ineffective_queries.insert(0, {})
 
     return optimized_queries, ineffective_queries
 

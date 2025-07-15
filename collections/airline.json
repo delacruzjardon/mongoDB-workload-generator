@@ -8,9 +8,9 @@
         },
         "fieldName": {
             "flight_id": { "type": "int" },
-            "first_name": { "type": "string", "provider": "first_name" },
-            "last_name": { "type": "string", "provider": "last_name" },
-            "email": { "type": "string", "provider": "email", "maxLength": 20 },
+            "agent_first_name": { "type": "string", "provider": "first_name" },
+            "agent_last_name": { "type": "string", "provider": "last_name" },
+            "agent_email": { "type": "string", "provider": "email", "maxLength": 20 },
             "flight_date": { "type": "date", "provider": "date_time" },
             "origin": { "type": "string", "provider": "city", "minLength": 8, "maxLength": 30 },
             "destination": { "type": "string", "provider": "city", "minLength": 8,  "maxLength": 30 },

@@ -8,30 +8,7 @@ While the tool provides extensive configuration capabilities, it requires minima
 
 The application was developed and tested using Python 3. As such, Python 3 is recommended for optimal compatibility. If upgrading is not feasible, modifications to the scripts may be necessary to support older Python versions.
 
-The tool is optimized to leverage as many available CPU cores as you wish and supports configuration of an arbitrary number of threads among, enabling high parallelism and making it ideal for generating large-scale workloads and conducting effective stress tests on MongoDB clusters.
-
-
-## Configuration
-
-The tool consists of 8 main files and 2 sample collections: 
-
-* [mongodbCreds.py](mongodbCreds.py)
-* [mongodbLoadQueries.py](mongodbLoadQueries.py) 
-* [mongodbWorkload.py](mongodbWorkload.py)
-* [app.py](app.py)
-* [args.py](args.py)
-* [customProvider.py](customProvider.py)
-* [logger.py](logger.py)
-* [mongo_client.py](mongo_client.py)
-
-Collections:
-
-* [collections/airline.json](collections/airline.json)
-* [collections/rental.json](collections/rental.json)
-
-The only required configuration is in [mongodbCreds.py](mongodbCreds.py), where you define the connection details for your  cluster. The file is self-explanatory and includes examples to help you set up your environment correctly. You may also extend this file to include additional parameters as needed.
-
-All other files do not require any sort of configuration, however, you can provide your own collection definition JSON file and/or add additional query parameters to [mongodbLoadQueries.py](mongodbLoadQueries.py), but this is not a requirement. 
+The tool is optimized to utilize as many CPU cores as desired on the host system and supports the configuration of an arbitrary number of threads. The number of CPUs and threads refers to the available cores and threads on the source host running the workload generator. The more resources available, the greater the potential load that can be generated against the destination server. This enables high parallelism, making the tool ideal for generating large-scale workloads and conducting effective stress tests on MongoDB clusters.
 
 #### Pre-reqs
 
@@ -47,13 +24,48 @@ To install these libraries, run the following command:
 pip3 install faker joblib pymongo
 ```
 
+## Configuration
+
+The tool consists of 9 main files 
+
+* [mongodbCreds.py](mongodbCreds.py) 
+* [mongodbLoadQueries.py](mongodbLoadQueries.py)  
+* [mongodbWorkload.py](mongodbWorkload.py) 
+* [app.py](app.py)
+* [args.py](args.py)
+* [customProvider.py](customProvider.py)
+* [custom_query_executor.py](custom_query_executor.py)
+* [logger.py](logger.py)
+* [mongo_client.py](mongo_client.py)
+
+
+2 sample collections and 2 query templates have also been provided, they each have their own dedicated folders:
+
+[collections](collections) -- Collection Definitions
+
+* [collections/airline.json](collections/airline.json)
+* [collections/rental.json](collections/rental.json)
+
+[queries](queries) -- Query Definitions:
+
+* [queries/airline.json](queries/airline.json)
+* [queries/rental.json](queries/rental.json)
+
+The only configuration required in order to be able to start using the workload generator is in [mongodbCreds.py](mongodbCreds.py), where you define the connection details for your  cluster. The file is self-explanatory and includes examples to help you set up your environment correctly. You may also extend this file to include additional parameters as needed.
+
+All other files do not require any sort of configuration, the tool has a pre-definined set of queries that are randomly generated (these are found in [mongodbLoadQueries.py](mongodbLoadQueries.py)) which you can extend if you wish to do so. 
+
+
 ## Functionality
 
-By default, the workload runs for 60 seconds, using 4 threads and a single CPU core. It searches the collections directory for JSON files (i.e., collection definitions) and creates the appropriate databases and collections based on those definitions.
+By default, the workload runs for 60 seconds, utilizing 4 threads and a single CPU core. It scans the collections directory for JSON files (i.e., collection definitions) and creates the corresponding databases and collections accordingly.
 
-The tool includes two sample collection definition files. When executed with default settings, it creates two databases—airline and rental—each containing one collection: flights and cars, respectively. These collections are then populated with documents containing data similar to the sample shown below.
+The tool includes two sample collection definition files. When executed with the default settings, it creates two databases—airline and rental—each containing one collection: flights and cars, respectively. These collections are populated with sample documents similar to the example shown below.
 
-Note: Sharding is enabled by default when using the provided collection definitions from the collections directory. You can disable this behavior by editing the JSON files to remove the shardConfig section or by supplying your own custom collection definitions (details provided below).
+Query generation is handled automatically using templates defined in [./mongodbLoadQueries.py](mongodbLoadQueries.py). During workload execution, the tool randomly selects from these templates to simulate a full range of CRUD operations.
+
+Note: Sharding is enabled by default when using the sample collection definitions located in the collections directory. To disable this behavior, either remove the shardConfig section from the JSON files or supply custom collection definitions (see below for details).
+
 
 `airline.flights`
 
@@ -155,11 +167,44 @@ This default distribution provides a balanced and meaningful baseline for perfor
 During execution, the tool generates a real-time report every 5 seconds, showing the average number of queries executed across all utilized CPU cores, along with a detailed breakdown by operation type. At the end of the run, a final summary report is produced, providing statistics on overall workload performance and collection activity ([see sample output below](#Basic-Usage)).
 
 
+## Customization
+
+Workload generator comes pre-configured with 2 collections and 2 query definitions:
+
+Collections:
+
+* [collections/airline.json](collections/airline.json)
+* [collections/rental.json](collections/rental.json)
+
+Queries:
+
+* [queries/airline.json](queries/airline.json)
+* [queries/rental.json](queries/rental.json)
+
+
+When the tool starts, it automatically searches for collection definition files in the collections folder and generates queries at random. You can create your own collection definition files (in JSON format) and place them in the collections folder. Similarly, you can add custom query definition files (also in JSON format) to the queries folder. In order to use the queries from the `queries` folder you must provide the `--custom_queries` option.
+
+If you prefer to organize your custom collections and queries in different directories you can do so—just be sure to specify their locations when running the tool, as it defaults to searching in the collections and queries folders if you don't.
+
+To use custom collection definitions and queries from the default folders, simply provide the following parameters:
+
+```
+--collection_definition --custom_queries
+```
+
+To load files from custom locations supply the full paths, as shown in the example below. This will load all files found in those folders:
+
+```
+--collection_definition /tmp/collections --custom_queries /tmp/queries
+```
+
+NOTE: When using your own custom queries the `--optimized` parameter is ignored, since you control how your queries are written. You can either write optimized, ineffective queries or both. You can also create separate query definition files with optimized queries and ineffective queries, the use case is your choice..
+
 ## Usage
 
 The workload is highly configurable at runtime, enabling you to fine-tune its behavior by specifying various parameters during execution. These parameters allow you to control key aspects of the workload, including workload duration, number of threads, query distribution, and more.
 
-By default, the tool generates a predefined and preconfigured database and collection as explained above. However, you can optionally provide a custom collection definition file (see details below). You can also configure additional queries along with the existing ones (also detailed below). When used in combination, these options offer a high degree of flexibility, allowing you to adapt the application's behavior to meet your specific requirements and simulate operations that more accurately represent your target workload.
+By default, the tool generates a predefined and pre-configured database and collection as explained above. However, you can optionally provide custom collection definition and query files as explained above. When used in combination, these options offer a high degree of flexibility, allowing you to adapt the application's behavior to meet your specific requirements and simulate operations that more accurately represent your target workload.
 
 #### Getting help
 
@@ -167,7 +212,9 @@ You can obtain help and a list of all available parameters by running `./mongodb
 
 ```
 ./mongodbWorkload.py --help
-usage: mongodbWorkload.py [-h] [--collections COLLECTIONS] [--collection_definition COLLECTION_DEFINITION] [--recreate] [--runtime RUNTIME] [--batch_size BATCH_SIZE] [--threads THREADS] [--skip_update] [--skip_delete] [--skip_insert] [--skip_select] [--insert_ratio INSERT_RATIO] [--update_ratio UPDATE_RATIO] [--delete_ratio DELETE_RATIO] [--select_ratio SELECT_RATIO] [--report_interval REPORT_INTERVAL] [--cpu_ops] [--optimized] [--cpu CPU] [--log [LOG]]
+usage: mongodbWorkload.py [-h] [--collections COLLECTIONS] [--collection_definition [COLLECTION_DEFINITION]] [--recreate] [--runtime RUNTIME] [--batch_size BATCH_SIZE] [--threads THREADS]
+                          [--skip_update] [--skip_delete] [--skip_insert] [--skip_select] [--insert_ratio INSERT_RATIO] [--update_ratio UPDATE_RATIO] [--delete_ratio DELETE_RATIO]
+                          [--select_ratio SELECT_RATIO] [--report_interval REPORT_INTERVAL] [--optimized] [--cpu CPU] [--log [LOG]] [--custom_queries [CUSTOM_QUERIES]] [--debug]
 
 MongoDB Workload Generator
 
@@ -175,7 +222,7 @@ options:
   -h, --help            show this help message and exit
   --collections COLLECTIONS
                         How many collections to create (default 1).
-  --collection_definition COLLECTION_DEFINITION
+  --collection_definition [COLLECTION_DEFINITION]
                         (Optional) Name of a JSON file (from collections/), full path to a file, or a directory. If omitted, all JSON files from 'collections/' will be used.
   --recreate            Recreate the collection before running the test.
   --runtime RUNTIME     Duration of the load test, specify in seconds (e.g., 60s) or minutes (e.g., 5m) (default 60s).
@@ -196,10 +243,12 @@ options:
                         Percentage of select operations (default 60).
   --report_interval REPORT_INTERVAL
                         Interval (in seconds) between workload stats output (default 5s).
-  --cpu_ops             Workload AVG OPS per CPU.
   --optimized           Run optimized workload only.
   --cpu CPU             Number of CPUs to launch multiple instances in parallel (default 1).
   --log [LOG]           Log filename and path (e.g., /tmp/report.log).
+  --custom_queries [CUSTOM_QUERIES]
+                        (Optional) Path to a single JSON query file or a directory containing multiple .json query files. If no path provided, all JSON files from 'queries/' will be used.
+  --debug               Enable debug logging to show queries and results.
 ```                        
 
 #### Basic Usage 
@@ -208,31 +257,31 @@ Once you have configured the settings to match your environment, you can run the
 
 ```
 ./mongodbWorkload.py
-2025-06-26 15:29:58 - INFO - Loaded 1 collection definition(s) from 'collections/rental.json'
-2025-06-26 15:29:58 - INFO - Loaded 1 collection definition(s) from 'collections/airline.json'
-2025-06-26 15:29:58 - INFO - Collection 'cars' created in DB 'rental'
-2025-06-26 15:29:59 - INFO - Sharding configured for 'rental.cars' with key {'rental_id': 'hashed'}
-2025-06-26 15:29:59 - INFO - Successfully created index: 'rental_id_1_car_type_1'
-2025-06-26 15:29:59 - INFO - Successfully created index: 'rental_id_1_pickup_location_1_dropoff_location_1'
-2025-06-26 15:29:59 - INFO - Successfully created index: 'rental_id_1_rental_date_1_return_date_1'
-2025-06-26 15:29:59 - INFO - Successfully created index: 'license_plate_1'
-2025-06-26 15:29:59 - INFO - Collection 'flights' created in DB 'airline'
-2025-06-26 15:30:00 - INFO - Sharding configured for 'airline.flights' with key {'flight_id': 'hashed'}
-2025-06-26 15:30:00 - INFO - Successfully created index: 'flight_id_1_equipment.plane_type_1'
-2025-06-26 15:30:00 - INFO - Successfully created index: 'flight_id_1_seats_available_1'
-2025-06-26 15:30:00 - INFO - Successfully created index: 'flight_id_1_duration_minutes_1_seats_available_1'
-2025-06-26 15:30:01 - INFO - Successfully created index: 'equipment.plane_type_1'
-2025-06-26 15:30:01 - INFO -
+2025-07-15 18:09:34 - INFO - Loaded 1 collection definition(s) from 'collections/rental.json'
+2025-07-15 18:09:34 - INFO - Loaded 1 collection definition(s) from 'collections/airline.json'
+2025-07-15 18:09:34 - INFO - Collection 'cars' created in DB 'rental'
+2025-07-15 18:09:34 - INFO - Sharding configured for 'rental.cars' with key {'rental_id': 'hashed'}
+2025-07-15 18:09:34 - INFO - Successfully created index: 'rental_id_1_car_type_1'
+2025-07-15 18:09:34 - INFO - Successfully created index: 'rental_id_1_pickup_location_1_dropoff_location_1'
+2025-07-15 18:09:34 - INFO - Successfully created index: 'rental_id_1_rental_date_1_return_date_1'
+2025-07-15 18:09:34 - INFO - Successfully created index: 'license_plate_1'
+2025-07-15 18:09:34 - INFO - Collection 'flights' created in DB 'airline'
+2025-07-15 18:09:34 - INFO - Sharding configured for 'airline.flights' with key {'flight_id': 'hashed'}
+2025-07-15 18:09:34 - INFO - Successfully created index: 'flight_id_1_equipment.plane_type_1'
+2025-07-15 18:09:34 - INFO - Successfully created index: 'flight_id_1_seats_available_1'
+2025-07-15 18:09:34 - INFO - Successfully created index: 'flight_id_1_duration_minutes_1_seats_available_1'
+2025-07-15 18:09:34 - INFO - Successfully created index: 'equipment.plane_type_1'
+2025-07-15 18:09:34 - INFO -
 
 Duration: 60 seconds
 CPUs: 1
 Threads: (Per CPU: 4 | Total: 4)
-Databases and Collections: rental.cars | airline.flights
+Database and Collection: (rental.cars | airline.flights)
 Instances of the same collection: 1
 Configure Sharding: True
 Insert batch size: 10
 Optimized workload: False
-Workload ratio: SELECTS: 60% | INSERTS: 10% | UPDATES: 20% | DELETES: 10%
+Workload ratio: (SELECTS: 60% | INSERTS: 10% | UPDATES: 20% | DELETES: 10%)
 Report frequency: 5 seconds
 Report logfile: None
 
@@ -240,42 +289,42 @@ Report logfile: None
                                                  Workload Started
 ===================================================================================================================
 
-2025-06-26 15:30:08 - INFO - AVG Operations last 5s (1 CPUs): 10.60 (SELECTS: 6.80, INSERTS: 0.80, UPDATES: 2.00, DELETES: 1.00)
-2025-06-26 15:30:13 - INFO - AVG Operations last 5s (1 CPUs): 13.60 (SELECTS: 9.00, INSERTS: 1.20, UPDATES: 2.60, DELETES: 0.80)
-2025-06-26 15:30:18 - INFO - AVG Operations last 5s (1 CPUs): 13.60 (SELECTS: 8.40, INSERTS: 2.20, UPDATES: 2.20, DELETES: 0.80)
-2025-06-26 15:30:23 - INFO - AVG Operations last 5s (1 CPUs): 13.60 (SELECTS: 8.80, INSERTS: 1.40, UPDATES: 1.40, DELETES: 2.00)
-2025-06-26 15:30:28 - INFO - AVG Operations last 5s (1 CPUs): 13.40 (SELECTS: 8.20, INSERTS: 1.60, UPDATES: 2.40, DELETES: 1.20)
-2025-06-26 15:30:33 - INFO - AVG Operations last 5s (1 CPUs): 13.40 (SELECTS: 9.20, INSERTS: 1.20, UPDATES: 2.20, DELETES: 0.80)
-2025-06-26 15:30:38 - INFO - AVG Operations last 5s (1 CPUs): 13.20 (SELECTS: 7.40, INSERTS: 0.80, UPDATES: 3.40, DELETES: 1.60)
-2025-06-26 15:30:43 - INFO - AVG Operations last 5s (1 CPUs): 13.60 (SELECTS: 7.40, INSERTS: 1.20, UPDATES: 3.40, DELETES: 1.60)
-2025-06-26 15:30:48 - INFO - AVG Operations last 5s (1 CPUs): 13.40 (SELECTS: 8.80, INSERTS: 1.20, UPDATES: 1.80, DELETES: 1.60)
-2025-06-26 15:30:53 - INFO - AVG Operations last 5s (1 CPUs): 13.40 (SELECTS: 8.20, INSERTS: 1.40, UPDATES: 2.60, DELETES: 1.20)
-2025-06-26 15:30:58 - INFO - AVG Operations last 5s (1 CPUs): 13.20 (SELECTS: 6.00, INSERTS: 1.80, UPDATES: 3.00, DELETES: 2.40)
-2025-06-26 15:31:04 - INFO - AVG Operations last 5s (1 CPUs): 13.20 (SELECTS: 7.20, INSERTS: 1.40, UPDATES: 3.00, DELETES: 1.60)
-2025-06-26 15:31:09 - INFO - AVG Operations last 5s (1 CPUs): 0.40 (SELECTS: 0.40, INSERTS: 0.00, UPDATES: 0.00, DELETES: 0.00)
-2025-06-26 15:31:09 - INFO -
+2025-07-15 18:09:40 - INFO - AVG Operations last 5s (1 CPUs): 147.00 (SELECTS: 88.60, INSERTS: 13.60, UPDATES: 28.40, DELETES: 16.40)
+2025-07-15 18:09:45 - INFO - AVG Operations last 5s (1 CPUs): 133.80 (SELECTS: 77.80, INSERTS: 15.40, UPDATES: 29.00, DELETES: 11.60)
+2025-07-15 18:09:50 - INFO - AVG Operations last 5s (1 CPUs): 157.20 (SELECTS: 91.40, INSERTS: 15.20, UPDATES: 32.60, DELETES: 18.00)
+2025-07-15 18:09:55 - INFO - AVG Operations last 5s (1 CPUs): 148.60 (SELECTS: 88.80, INSERTS: 15.80, UPDATES: 29.40, DELETES: 14.60)
+2025-07-15 18:10:00 - INFO - AVG Operations last 5s (1 CPUs): 133.60 (SELECTS: 76.00, INSERTS: 14.00, UPDATES: 29.80, DELETES: 13.80)
+2025-07-15 18:10:05 - INFO - AVG Operations last 5s (1 CPUs): 161.80 (SELECTS: 97.40, INSERTS: 13.00, UPDATES: 34.20, DELETES: 17.20)
+2025-07-15 18:10:10 - INFO - AVG Operations last 5s (1 CPUs): 155.00 (SELECTS: 96.40, INSERTS: 14.20, UPDATES: 32.00, DELETES: 12.40)
+2025-07-15 18:10:15 - INFO - AVG Operations last 5s (1 CPUs): 147.20 (SELECTS: 87.40, INSERTS: 15.40, UPDATES: 30.80, DELETES: 13.60)
+2025-07-15 18:10:20 - INFO - AVG Operations last 5s (1 CPUs): 145.20 (SELECTS: 90.00, INSERTS: 12.60, UPDATES: 30.20, DELETES: 12.40)
+2025-07-15 18:10:25 - INFO - AVG Operations last 5s (1 CPUs): 152.20 (SELECTS: 89.00, INSERTS: 15.40, UPDATES: 31.80, DELETES: 16.00)
+2025-07-15 18:10:30 - INFO - AVG Operations last 5s (1 CPUs): 135.20 (SELECTS: 78.80, INSERTS: 13.20, UPDATES: 30.00, DELETES: 13.20)
+2025-07-15 18:10:35 - INFO - AVG Operations last 5s (1 CPUs): 161.60 (SELECTS: 99.00, INSERTS: 13.80, UPDATES: 32.60, DELETES: 16.20)
+2025-07-15 18:10:40 - INFO - AVG Operations last 5s (1 CPUs): 161.60 (SELECTS: 99.00, INSERTS: 13.80, UPDATES: 32.60, DELETES: 16.20)
+2025-07-15 18:10:40 - INFO -
 ===================================================================================================================
                                                 Workload Finished
 ===================================================================================================================
 
-2025-06-26 15:31:09 - INFO -
+2025-07-15 18:10:40 - INFO -
 ====================================================================================================
 |                                         Collection Stats                                         |
 ====================================================================================================
 |       Database       |      Collection      |     Sharded      |      Size      |    Documents   |
 ====================================================================================================
-|        rental        |         cars         |       True       |    0.11 MB     |       334      |
-|       airline        |       flights        |       True       |    0.38 MB     |       466      |
+|        rental        |         cars         |       True       |    0.06 MB     |       155      |
+|       airline        |       flights        |       True       |    0.28 MB     |       120      |
 ====================================================================================================
 
-2025-06-26 15:31:09 - INFO -
+2025-07-15 18:10:40 - INFO -
 ===================================================================================================================
                                              Combined Workload Stats
 ===================================================================================================================
-Workload Runtime: 1.15 minutes
-Total Operations: 793 (SELECT: 479, INSERT: 81, UPDATE: 150, DELETE: 83)
-AVG Operations: 11.54 (SELECTS: 6.97, INSERTS: 1.18, UPDATES: 2.18, DELETES: 1.21)
-Total Documents Inserted: 810, Total Documents Found: 357, Total Documents Updated: 148, Total Documents Deleted: 10
+Workload Runtime: 1.10 minutes
+Total Operations: 8892 (SELECT: 5303, INSERT: 858, UPDATE: 1854, DELETE: 877)
+AVG Operations: 135.21 (SELECTS: 80.64, INSERTS: 13.05, UPDATES: 28.19, DELETES: 13.34)
+Total: (Documents Inserted: 8580 | Documents Found: 4375 | Documents Updated: 129381 | Documents Deleted: 8305)
 ===================================================================================================================
 ```
 
@@ -288,11 +337,12 @@ The parameters available and their use cases are shown below:
 
   - The workload will create multiple instances of the same collection when you specify `--collections` with the desired number of collections, for example: `--collections 5`. Each collection will have its index count appended to its name, such as `flights_1`, `flights_2`, `flights_3`, and so on. You can create additional collections even after the initial workload has been run. For example, if you run the first workload with `--collections 5` and then run a new workload with `--collections 6`, a new collection will be created and the workload will run against all 6 of them.
 
+
 2. collection_definition -- Collection structure
 
   - You can provide your own custom collection definition file in JSON format, following the provided examples found in the [collections](collections) folder. The collections from this folder are the default collections used by the workload if you do not provide your own. 
   
-  - You can create your own JSON file and place it in the `collections` folder or anywhere else in your file system. If you place the JSON file in the `collections` folder, all you need to do is pass the file name, e.g: `--collection_definition my_custom_definition.json`. However, if you store the JSON in a different folder, then you have to provide the entire path, e.g.: `--collection_definition /tmp/my_custom_definition.json`.
+  - You can create your own JSON file and place it in the `collections` folder or anywhere else in your file system. If you place the JSON file in the `collections` folder, all you need to do is pass the file name, e.g: `--collection_definition my_custom_definition.json`. However, if you store the JSON in a different folder, then you have to provide the entire path, e.g.: `--collection_definition /tmp/my_custom_definition.json`. You can create as many collections as you would like, you just need to create separate collection defintion files and place them in the same folder.
 
   - It is recommended for ease of use to place your custom collection definitions in the [collections](collections) folder.
 
@@ -324,6 +374,8 @@ The parameters available and their use cases are shown below:
     When enabled, this mode ensures that queries utilize the primary key and appropriate indexes, instead of using random fields that may or may not have indexes or other less efficient patterns. Using this option significantly enhances the workload's performance and efficiency.
 
     Additionally, enabling this flag restricts find workloads to aggregate queries only, minimizing the overhead of transferring large volumes of data from the database to the client.
+
+    This option is automatically ignored if you provide your own queries via `--custom_queries`.
 
 5. runtime -- How long to run the workload
 
@@ -378,16 +430,23 @@ The parameters available and their use cases are shown below:
 
   - You can configure the workload to log its output to a file. While the workload will continue to stream its output to the terminal, a log file will also be created for additional analysis, should you choose to enable this option. e.g: `--log /tmp/report.log`
 
-13. Report per CPU stats
-  - By default the real-time workload report outputs the stats for all CPUs combined however, you can change this behavior by providing `--cpu_ops`. This will change the default behavior of the real-time reporting to display the AVG OPS per CPU, instead of AVG OPS for all CPUs combined.    
+13. Configure custom query templates
 
-14. Configure custom queries
-
-  - You can customize the workload by adding or removing queries in the [mongodbLoadQueries.py](mongodbLoadQueries.py) file to suit your specific requirements. The file includes a mix of optimized and intentionally inefficient queries to help simulate various workloads.
+  - You can customize the workload by adding or removing queries in the [mongodbLoadQueries.py](mongodbLoadQueries.py) file to suit your specific requirements. The file includes a mix of optimized and intentionally inefficient queries to help simulate various workloads. The queries created by this file are randomly generated based on the collection definitions.
 
     During execution, the tool randomly selects between aggregation queries (e.g., `collection.count_documents(query)`) and select queries (e.g., `collection.find(query, projection)`), choosing from both optimized and inefficient options. If you prefer to use only optimized queries, you can enable the `--optimize` flag, which excludes inefficient queries from the workload.
 
-    Note: The query definitions in this file are structured as templates, enabling the tool to dynamically execute queries against any custom collection—regardless of its definition. If you choose to modify this file, ensure that you follow the same structure to maintain compatibility with the workload tool.
+    Note: The query definitions in this file are structured as templates, enabling the tool to dynamically execute queries against any custom collection. If you choose to modify this file, ensure that you follow the same structure to maintain compatibility with the workload tool.
+
+14. Create custom queries
+
+  - You have the ability to create your own queries, enabling the workload to run exactly the same queries as your application. In order to do this you just need to create your own JSON query definition files and add them to the `queries` folder.
+
+  - The tool comes with 2 query definition files that can be used when the configuration `--custom_queries` is provided. If you provide this option alone (without specifying a file name or path), the tool will automatically randomly generate queries based on all query definition files present in the `queries` folder.  
+
+  - The query definition files are in JSON format and 2 examples have been provided, so you can build your own custom queries to match your specific use case (make sure you follow the same syntax as provided in the examples).
+
+  - You can also store your custom queries in a separate folder, however you will need to pass the path, and this will randomly generate queries based on all the files in that folder: `--custom_queries /tmp/custom_query_folder` 
 
 15. Combine sharded and non-sharded collections in the same workload
 
@@ -397,4 +456,6 @@ The parameters available and their use cases are shown below:
 
     The above workflow will utilize the existing sharded collections while creating new collections as non-sharded, since the sharding configuration was not provided, but the number of collections was increased with `--collections`.
 
+16. Debug
 
+  - You can run the tool in debug mode by providing the `--debug` argument to see more details about your workload and if you wish to troubleshoot query issues.
