@@ -530,11 +530,60 @@ def update_documents(args, base_collection, random_db, random_collection, collec
 
     new_values = []
     new_types = []
+
+    # --- MODIFIED SECTION FOR PROVIDER HANDLING IN UPDATES ---
+    # Need to generate context *if* any of the selected_fields require it.
+    # This might require fetching the existing document to get its context values.
+    # For simplicity and to fix the immediate error, we'll mimic the generate_random_document
+    # context generation, which assumes new values. If you need to update based on *existing*
+    # document values (e.g., reduce seats available), you'd need to fetch the document first.
+    
+    # For this fix, we'll generate a fresh context for providers that need it.
+    # This will generate new random plane_type and total_seats values for 'equip'.
+    # If the update should be relative to the existing document, this needs more logic.
+    need_context = any(field_schema[f].get("provider") in ["passengers", "equip", "total_seats", "seats_available"] for f in selected_fields)
+    context = generate_aircraft_context() if need_context else {} # Assuming generate_aircraft_context exists and provides these.
+
     for f in selected_fields:
-        ftype = field_schema[f].get("type", "string")
-        new_val = generate_random_value(ftype)
+        props = field_schema[f]
+        provider = props.get("provider")
+        ftype = props.get("type", "string")
+
+        new_val = None
+        if provider:
+            # Handle special context-aware providers first, similar to generate_random_document
+            if provider == "passengers":
+                new_val = fake.passengers(
+                    total_seats=context.get("total_seats", 100),
+                    num_passengers=context.get("num_passengers", 10),
+                    fake=fake
+                )
+            elif provider == "equip":
+                # Ensure context exists for these arguments
+                plane_type = context.get("plane_type", "Airbus A320")
+                total_seats = context.get("total_seats", 100)
+                new_val = fake.equip(plane_type, total_seats)
+                logging.debug(f"Update: Field '{f}': Used provider '{provider}' with plane_type={plane_type}, total_seats={total_seats}.")
+            elif provider == "total_seats":
+                new_val = str(context.get("total_seats", 100)) # Ensure type consistency if 'str' is expected
+            elif provider == "seats_available":
+                new_val = context.get("seats_available", 0)
+            else: # All other general providers (like 'drivers', 'rental_options')
+                provider_func = getattr(fake, provider, None)
+                if callable(provider_func):
+                    new_val = provider_func()
+                    logging.debug(f"Update: Field '{f}': Used general provider '{provider}'.")
+                else:
+                    logging.warning(f"Update: Provider '{provider}' not found or not callable on 'fake' object for field '{f}'. Falling back to generic type '{ftype}'.")
+                    new_val = generate_random_value(ftype)
+        else:
+            # Fallback to generic generate_random_value if no provider
+            logging.debug(f"Update: Field '{f}': No provider specified. Using generic type '{ftype}'.")
+            new_val = generate_random_value(ftype)
+        
         new_values.append(new_val)
         new_types.append(ftype)
+    # --- END MODIFIED SECTION ---
 
     # Generate optimized and ineffective update queries
     optimized_updates, ineffective_updates = mongodbLoadQueries.update_queries(

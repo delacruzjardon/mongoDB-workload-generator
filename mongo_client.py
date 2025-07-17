@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import pymongo
+import pymongo # type: ignore
 import logging
 import sys
 from urllib.parse import urlencode
