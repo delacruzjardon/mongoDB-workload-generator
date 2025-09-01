@@ -45,8 +45,10 @@ def _create_new_client():
     else:
         hosts = ",".join(dbconfig["hosts"])
 
-
-    if dbconfig.get("username") and dbconfig.get("password"):
+    if dbconfig.get("atlas"):
+        connection_uri = f"{dbconfig['atlas']}"
+        return pymongo.MongoClient(connection_uri)
+    elif dbconfig.get("username") and dbconfig.get("password"):
         connection_uri = f"mongodb://{dbconfig['username']}:{dbconfig['password']}@{hosts}"
     else:
         connection_uri = f"mongodb://{hosts}"
