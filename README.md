@@ -55,6 +55,9 @@ The only configuration required in order to be able to start using the workload 
 
 All other files do not require any sort of configuration, the tool has a pre-definined set of queries that are randomly generated (these are found in [mongodbLoadQueries.py](mongodbLoadQueries.py)) which you can extend if you wish to do so. 
 
+## How to run
+
+./mongodbWorkload.py
 
 ## Functionality
 
